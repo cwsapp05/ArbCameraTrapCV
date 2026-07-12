@@ -8,7 +8,6 @@ let lastRunningJobId = null; // tracks which job the log box is currently showin
 const TITLE_EMOJIS = ["🦝", "🦌", "🐇", "🐻", "🐰", "🐭", "🐸", "🦆", "🪿", "🐦‍⬛", "🦉", "🦇", "🐞", "🐍", "🦎", "🐊", "🐆", "🦃", "🐁", "🐀", "🐿️"];
 document.getElementById("title-emoji").textContent =
   TITLE_EMOJIS[Math.floor(Math.random() * TITLE_EMOJIS.length)];
-
 // ---- Tabs ----
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -374,4 +373,12 @@ function renderModalList(query) {
 
     modalList.appendChild(item);
   });
+}
+
+// ---- Initial load ----
+// The Upload tab is marked active in the HTML by default (no tab click fires
+// on page load/refresh), so without this, the queue panel and running log
+// stay empty until the user manually switches tabs and back.
+if (document.getElementById("tab-upload").classList.contains("active")) {
+  pollQueue();
 }
