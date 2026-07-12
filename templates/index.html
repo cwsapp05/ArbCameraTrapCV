@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Trail Cam Species Library</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="app">
+  <h1><span id="title-emoji">🦝</span> Trail Cam Species Library</h1>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="upload">Upload</button>
+    <button class="tab-btn" data-tab="library">Library</button>
+    <button class="tab-btn" data-tab="favorites">Favorites</button>
+  </div>
+
+  <!-- UPLOAD TAB -->
+  <section id="tab-upload" class="tab-panel active">
+    <div class="card">
+      <label>Folder of videos/images</label>
+      <div class="folder-row">
+        <input type="text" id="folder-path" placeholder="No folder selected" readonly>
+        <button id="browse-btn">Browse…</button>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <label>Country code (optional)</label>
+          <input type="text" id="country" placeholder="e.g. USA" maxlength="3">
+        </div>
+        <div>
+          <label>State code (optional)</label>
+          <input type="text" id="state" placeholder="e.g. FL" maxlength="2">
+        </div>
+      </div>
+
+      <button id="run-btn" disabled>Start Processing</button>
+      <p id="submit-confirmation" class="muted hidden"></p>
+    </div>
+
+    <!-- QUEUE + LIVE LOG (moved here from Library) -->
+    <div class="card" id="queue-panel">
+      <h3>Queue</h3>
+      <div id="queue-empty" class="muted">Nothing running or waiting.</div>
+      <ul id="queue-list" class="queue-list"></ul>
+
+      <div id="running-log-box" class="status-box hidden">
+        <div class="status-line">
+          <span id="running-log-label"></span>
+          <span class="spinner"></span>
+        </div>
+        <pre id="running-log-tail"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- LIBRARY TAB -->
+  <section id="tab-library" class="tab-panel">
+    <div class="card">
+      <label>Filter by species</label>
+      <select id="lib-species-filter"></select>
+    </div>
+
+    <div id="lib-grid" class="video-grid"></div>
+    <div id="lib-empty" class="muted hidden">No videos match this filter yet.</div>
+  </section>
+
+  <!-- FAVORITES TAB -->
+  <section id="tab-favorites" class="tab-panel">
+    <div class="card">
+      <label>Filter by species</label>
+      <select id="fav-species-filter"></select>
+    </div>
+
+    <div id="fav-grid" class="video-grid"></div>
+    <div id="fav-empty" class="muted hidden">No favorited videos yet — star some from the Library tab.</div>
+  </section>
+</div>
+
+<!-- Video card template, cloned by JS for both Library and Favorites -->
+<template id="video-card-template">
+  <div class="video-card">
+    <video controls preload="metadata"></video>
+    <div class="video-card-body">
+      <div class="video-filename"></div>
+      <div class="video-tag-row">
+        <span class="species-badge"></span>
+        <button class="favorite-btn" title="Favorite">☆</button>
+      </div>
+      <div class="correction-row">
+        <select class="correction-select"></select>
+        <button class="save-correction-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- "Add new species" modal: search the FULL SpeciesNet taxonomy, including
+     species with zero clips so far -->
+<div id="species-modal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Assign a species</h3>
+      <button id="modal-close-btn" class="modal-close">✕</button>
+    </div>
+    <input type="text" id="modal-search" placeholder="Search all SpeciesNet species…">
+    <div id="modal-species-list" class="modal-species-list"></div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
