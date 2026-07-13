@@ -888,6 +888,12 @@ document.getElementById("ctx-copy-btn").addEventListener("click", (e) => {
   closeRowContextMenu();
 });
 
+document.getElementById("ctx-copy-all-btn").addEventListener("click", (e) => {
+  e.stopPropagation(); // Prevent the click from triggering window close logic
+  copyEntireTableToClipboard();
+  closeRowContextMenu(); // Hide the menu when done
+});
+
 document.getElementById("ctx-delete-btn").addEventListener("click", async (e) => {
   e.stopPropagation();
   const videoId = contextMenuVideoId;
@@ -924,6 +930,28 @@ function copyRowToClipboard(tr) {
   const line = cells.join("\t"); // real tab characters — Excel splits pasted
                                   // tab-separated text into columns automatically
   navigator.clipboard.writeText(line).catch(() => {
+    alert("Couldn't copy to clipboard — your browser may be blocking clipboard access on this page.");
+  });
+}
+
+function copyEntireTableToClipboard() {
+  const tbody = document.getElementById("spreadsheet-body");
+  const rows = tbody.querySelectorAll("tr");
+  
+  if (rows.length === 0) return;
+
+  // Extract data from every row using the exact same cell mapping format
+  const allLines = Array.from(rows).map(tr => {
+    return SPREADSHEET_FIELDS.map(field =>
+      tr.querySelector(`td[data-field="${field}"]`).textContent
+    ).join("\t"); // Join individual cells with tabs
+  });
+
+  // Join all lines with newlines to form the complete table block
+  const fullTableText = allLines.join("\n");
+
+  // Write the structured block to the clipboard
+  navigator.clipboard.writeText(fullTableText).catch(() => {
     alert("Couldn't copy to clipboard — your browser may be blocking clipboard access on this page.");
   });
 }
