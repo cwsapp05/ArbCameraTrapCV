@@ -59,13 +59,19 @@
 
   <!-- LIBRARY TAB -->
   <section id="tab-library" class="tab-panel">
-    <div class="card">
-      <label>Filter by species</label>
-      <select id="lib-species-filter"></select>
+    <!-- GROUP VIEW: one card per species, click to drill into its videos -->
+    <div id="lib-groups-view">
+      <div id="lib-group-cards" class="species-group-cards"></div>
+      <div id="lib-groups-empty" class="muted hidden">No videos processed yet.</div>
     </div>
 
-    <div id="lib-grid" class="video-grid"></div>
-    <div id="lib-empty" class="muted hidden">No videos match this filter yet.</div>
+    <!-- DETAIL VIEW: videos for whichever species card was clicked -->
+    <div id="lib-detail-view" class="hidden">
+      <button id="lib-back-btn" class="back-btn">← Back to species</button>
+      <h3 id="lib-detail-heading"></h3>
+      <div id="lib-grid" class="video-grid"></div>
+      <div id="lib-empty" class="muted hidden">No videos match this filter yet.</div>
+    </div>
   </section>
 
   <!-- FAVORITES TAB -->

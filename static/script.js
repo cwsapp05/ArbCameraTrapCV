@@ -3,6 +3,7 @@ let allSpecies = [];        // full taxonomy from /api/species, INCLUDES zero-co
 let speciesWithClips = [];  // allSpecies filtered to count > 0 — used for dropdowns
 let modalTargetVideoId = null;
 let lastRunningJobId = null; // tracks which job the log box is currently showing
+let libraryActiveSpecies = null; // which species card was drilled into, or null = showing the group view
 
 // ---- Random title emoji, picked fresh each page load ----
 const TITLE_EMOJIS = ["🦝", "🦌", "🐇", "🐻", "🐰", "🐭", "🐸", "🦆", "🪿", "🐦‍⬛", "🦉", "🦇", "🐞", "🐍", "🦎", "🐊", "🐆", "🦃", "🐁", "🐀", "🐿️"];
@@ -22,10 +23,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
       clearTimeout(queuePollTimer);
     }
     if (btn.dataset.tab === "library") {
-      refreshSpeciesData().then(() => {
-        populateFilterDropdown("lib-species-filter");
-        loadLibrary();
-      });
+      refreshSpeciesData().then(showLibraryGroups); // always start fresh at the group view
     }
     if (btn.dataset.tab === "favorites") {
       refreshSpeciesData().then(() => {
@@ -205,12 +203,61 @@ function populateFilterDropdown(selectId) {
   }
 }
 
-document.getElementById("lib-species-filter").addEventListener("change", loadLibrary);
 document.getElementById("fav-species-filter").addEventListener("change", loadFavorites);
+
+// ---- Library tab: species group cards + drill-down detail view ----
+function showLibraryGroups() {
+  libraryActiveSpecies = null;
+  document.getElementById("lib-detail-view").classList.add("hidden");
+  document.getElementById("lib-groups-view").classList.remove("hidden");
+  renderLibraryGroupCards();
+}
+
+function renderLibraryGroupCards() {
+  const container = document.getElementById("lib-group-cards");
+  const empty = document.getElementById("lib-groups-empty");
+  container.innerHTML = "";
+
+  if (speciesWithClips.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  speciesWithClips.forEach(s => {
+    const card = document.createElement("div");
+    card.className = "species-group-card" + (s.label === "blank" ? " blank" : "");
+
+    const label = document.createElement("div");
+    label.className = "species-group-label";
+    label.textContent = s.label;
+    card.appendChild(label);
+
+    const count = document.createElement("div");
+    count.className = "species-group-count";
+    count.textContent = `${s.count} clip${s.count === 1 ? "" : "s"}`;
+    card.appendChild(count);
+
+    card.addEventListener("click", () => openLibraryGroup(s.label));
+    container.appendChild(card);
+  });
+}
+
+function openLibraryGroup(label) {
+  libraryActiveSpecies = label;
+  document.getElementById("lib-groups-view").classList.add("hidden");
+  document.getElementById("lib-detail-view").classList.remove("hidden");
+  document.getElementById("lib-detail-heading").textContent = label;
+  loadLibrary();
+}
+
+document.getElementById("lib-back-btn").addEventListener("click", () => {
+  refreshSpeciesData().then(showLibraryGroups); // counts may have changed while drilled in
+});
 
 // ---- Library / Favorites video grids ----
 async function loadLibrary() {
-  const species = document.getElementById("lib-species-filter").value;
+  const species = libraryActiveSpecies;
   const url = "/api/videos" + (species ? `?species=${encodeURIComponent(species)}` : "");
   const res = await fetch(url);
   const vids = await res.json();
@@ -250,7 +297,7 @@ function renderGrid(videos, gridId, emptyId) {
     const badge = card.querySelector(".species-badge");
     badge.textContent = v.display_species;
     if (v.display_species === "blank") badge.classList.add("blank");
-    if (v.corrected_species) badge.classList.add("corrected");
+    if (!v.corrected_species) badge.classList.add("ai-generated");
 
     const favBtn = card.querySelector(".favorite-btn");
     favBtn.textContent = v.favorited ? "★" : "☆";
@@ -286,8 +333,7 @@ function renderGrid(videos, gridId, emptyId) {
       await saveCorrection(v.id, correctionSelect.value);
       await refreshSpeciesData();
       if (whichTab === "lib") {
-        populateFilterDropdown("lib-species-filter");
-        loadLibrary();
+        loadLibrary(); // group counts refresh next time "Back to species" is clicked
       } else {
         populateFilterDropdown("fav-species-filter");
         loadFavorites();
@@ -407,8 +453,7 @@ function renderModalList(query) {
       closeSpeciesModal();
       await refreshSpeciesData();
       if (whichTab === "lib") {
-        populateFilterDropdown("lib-species-filter");
-        loadLibrary();
+        loadLibrary(); // group counts refresh next time "Back to species" is clicked
       } else {
         populateFilterDropdown("fav-species-filter");
         loadFavorites();

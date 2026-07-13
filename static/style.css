@@ -235,7 +235,7 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   color: #15803d;
 }
 .species-badge.blank { background: #f1f3f5; color: #8a929c; }
-.species-badge.corrected::after { content: " ✎"; }
+.species-badge.ai-generated::after { content: " ✨"; }
 
 .favorite-btn {
   background: none;
@@ -271,6 +271,56 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   background: #57606a;
 }
 .correction-row button:hover { background: #444b53; }
+
+/* ---- Library species group cards ---- */
+.species-group-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.9rem;
+}
+
+.species-group-card {
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 10px;
+  padding: 1.1rem 1rem;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.species-group-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  transform: translateY(-1px);
+}
+.species-group-card.blank { background: #fafbfc; }
+
+.species-group-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-transform: capitalize;
+  margin-bottom: 0.3rem;
+}
+
+.species-group-count {
+  font-size: 0.8rem;
+  color: #8a929c;
+}
+
+.back-btn {
+  background: none;
+  color: #2563eb;
+  border: none;
+  padding: 0.3rem 0;
+  font-size: 0.9rem;
+  margin-bottom: 0.8rem;
+}
+.back-btn:hover { background: none; text-decoration: underline; }
+
+#lib-detail-heading {
+  text-transform: capitalize;
+  margin: 0 0 0.9rem 0;
+}
 
 /* ---- Editable details grid (Date/Time/Location/Diel/Count/File Name/Notes) ---- */
 /* ---- Spreadsheet tab ---- */
