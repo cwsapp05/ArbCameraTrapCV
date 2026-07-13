@@ -326,6 +326,10 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 /* ---- Spreadsheet tab ---- */
 .spreadsheet {
   width: 100%;
+  table-layout: fixed;  /* column widths come from the widths below, not
+                            from whatever content happens to be in a cell —
+                            this is what stops columns from resizing when a
+                            cell switches from plain text to an <input> */
   border-collapse: collapse;
   font-size: 0.85rem;
 }
@@ -338,8 +342,17 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   border-bottom: 1px solid #e2e5ea;
 }
 
-.spreadsheet th.menu-col { width: 2rem; }
 .spreadsheet th.arrow-col { width: 1.75rem; }
+.spreadsheet th.menu-col { width: 2rem; }
+/* Column order: Date, Time, Location, Species, Count, Notes, File Name, Diel Period */
+.spreadsheet th:nth-child(2) { width: 10%; }
+.spreadsheet th:nth-child(3) { width: 9%; }
+.spreadsheet th:nth-child(4) { width: 12%; }
+.spreadsheet th:nth-child(5) { width: 12%; }
+.spreadsheet th:nth-child(6) { width: 6%; }
+.spreadsheet th:nth-child(7) { width: 17%; }
+.spreadsheet th:nth-child(8) { width: 15%; }
+.spreadsheet th:nth-child(9) { width: 9%; }
 
 .arrow-cell {
   text-align: center;
@@ -385,7 +398,6 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 220px;
 }
 
 .spreadsheet td.editing {
@@ -393,6 +405,8 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 
 .spreadsheet td input {
+  box-sizing: border-box; /* so the input's own border/padding stay inside
+                              the fixed column width instead of adding to it */
   width: 100%;
   font-size: 0.85rem;
   padding: 0.25rem 0.4rem;

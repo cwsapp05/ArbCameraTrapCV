@@ -224,7 +224,14 @@ function renderLibraryGroupCards() {
   }
   empty.classList.add("hidden");
 
-  speciesWithClips.forEach(s => {
+  const sorted = [...speciesWithClips].sort((a, b) => {
+    if (a.label === "blank") return 1;   // blank always last, regardless of count
+    if (b.label === "blank") return -1;
+    if (b.count !== a.count) return b.count - a.count; // most videos first
+    return a.label.localeCompare(b.label); // tie-break alphabetically
+  });
+
+  sorted.forEach(s => {
     const card = document.createElement("div");
     card.className = "species-group-card" + (s.label === "blank" ? " blank" : "");
 
@@ -658,6 +665,9 @@ function startCellEdit(td, videoId) {
   if (td.querySelector("input")) return; // already editing
   const field = td.dataset.field;
   const originalValue = td.textContent;
+  const tr = td.closest("tr");
+
+  autoOpenBarCropForRow(tr);
 
   td.classList.add("editing");
   td.textContent = "";
@@ -677,6 +687,7 @@ function startCellEdit(td, videoId) {
     if (!shouldSave) {
       td.classList.remove("editing");
       td.textContent = originalValue;
+      autoCloseBarCropForRow(tr);
       return;
     }
 
@@ -684,11 +695,32 @@ function startCellEdit(td, videoId) {
     const savedText = await saveCellEdit(videoId, field, newValue, originalValue);
     td.classList.remove("editing");
     td.textContent = savedText;
+    autoCloseBarCropForRow(tr);
   };
 
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") finish(true);
     if (e.key === "Escape") finish(false);
+    if (e.key === "Tab") {
+      const currentIndex = SPREADSHEET_FIELDS.indexOf(field);
+      const targetIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
+      const targetField = SPREADSHEET_FIELDS[targetIndex];
+      const targetTd = targetField ? tr.querySelector(`td[data-field="${targetField}"]`) : null;
+
+      if (targetTd) {
+        e.preventDefault();
+        // Deliberately NOT calling finish() ourselves here — starting the
+        // edit on the next cell focuses its input, which naturally fires a
+        // native blur on THIS input, which runs this cell's own finish(true)
+        // via the listener below. Because the next cell's edit opens first
+        // (bumping the row's active-edit count to 2 before this one's finish
+        // drops it back to 1), the bar-crop dropdown never sees the count
+        // hit 0 in between — no flicker, no reopen network request.
+        startCellEdit(targetTd, videoId);
+      }
+      // else: no cell in that direction — let default Tab behavior run;
+      // the existing blur listener below still saves and cleans up normally.
+    }
   });
   input.addEventListener("blur", () => finish(true));
 }
@@ -778,6 +810,20 @@ document.addEventListener("keydown", (e) => {
 // width, showing the saved info-bar crop image. Toggling the same row's
 // arrow again collapses it; each row's dropdown is independent, so more
 // than one can be open at a time for side-by-side comparison.
+// ---- Bar-crop dropdown row (Spreadsheet left-side arrow button) ----
+// Expands a row directly beneath the clicked one, spanning the full table
+// width, showing the saved info-bar crop image. Each row's dropdown is
+// independent, so more than one can be open at a time for side-by-side
+// comparison.
+//
+// Two ways a dropdown opens, tracked via dataset.openedBy on the drop row:
+//   "manual" — the user clicked the arrow button directly. Stays open until
+//              they click it again, no matter what else happens in the row.
+//   "auto"   — opened automatically because the user started editing a
+//              field in that row. Closes automatically once they're done
+//              editing EVERY field in that row (tracked via
+//              tr.dataset.activeEdits) — but only if it's still "auto" at
+//              that point; a manual open is never auto-closed.
 function toggleBarCropRow(tr, arrowBtn, videoId) {
   const next = tr.nextElementSibling;
   if (next && next.classList.contains("bar-crop-row")) {
@@ -785,10 +831,14 @@ function toggleBarCropRow(tr, arrowBtn, videoId) {
     arrowBtn.classList.remove("expanded");
     return;
   }
+  openBarCropRow(tr, arrowBtn, videoId, "manual");
+}
 
+function openBarCropRow(tr, arrowBtn, videoId, openedBy) {
   const totalColumns = 2 + SPREADSHEET_FIELDS.length; // arrow column + fields + menu column
   const dropRow = document.createElement("tr");
   dropRow.className = "bar-crop-row";
+  dropRow.dataset.openedBy = openedBy;
 
   const td = document.createElement("td");
   td.colSpan = totalColumns;
@@ -802,4 +852,35 @@ function toggleBarCropRow(tr, arrowBtn, videoId) {
   dropRow.appendChild(td);
   tr.after(dropRow);
   arrowBtn.classList.add("expanded");
+}
+
+function autoOpenBarCropForRow(tr) {
+  const activeEdits = parseInt(tr.dataset.activeEdits || "0", 10) + 1;
+  tr.dataset.activeEdits = String(activeEdits);
+
+  const arrowBtn = tr.querySelector(".bar-crop-btn");
+  if (!arrowBtn) return; // this video has no saved crop to show
+
+  const next = tr.nextElementSibling;
+  const alreadyOpen = next && next.classList.contains("bar-crop-row");
+  if (!alreadyOpen) {
+    openBarCropRow(tr, arrowBtn, tr.dataset.videoId, "auto");
+  }
+  // if it's already open (manually or otherwise), leave it exactly as-is —
+  // editing never "downgrades" a manual open.
+}
+
+function autoCloseBarCropForRow(tr) {
+  let activeEdits = parseInt(tr.dataset.activeEdits || "0", 10) - 1;
+  if (activeEdits < 0) activeEdits = 0;
+  tr.dataset.activeEdits = String(activeEdits);
+
+  if (activeEdits > 0) return; // still editing another field in this row
+
+  const arrowBtn = tr.querySelector(".bar-crop-btn");
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("bar-crop-row") && next.dataset.openedBy === "auto") {
+    next.remove();
+    if (arrowBtn) arrowBtn.classList.remove("expanded");
+  }
 }
