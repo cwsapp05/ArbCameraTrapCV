@@ -235,6 +235,18 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .favorite-btn:hover { background: none; color: #b8860b; }
 .favorite-btn.active { color: #f5a623; }
 
+.card-actions { display: flex; align-items: center; gap: 0.3rem; }
+
+.delete-btn {
+  background: none;
+  border: none;
+  font-size: 0.95rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+.delete-btn:hover { background: none; opacity: 1; }
+
 .correction-row {
   display: flex;
   gap: 0.4rem;
@@ -246,6 +258,96 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   background: #57606a;
 }
 .correction-row button:hover { background: #444b53; }
+
+/* ---- Editable details grid (Date/Time/Location/Diel/Count/File Name/Notes) ---- */
+/* ---- Spreadsheet tab ---- */
+.spreadsheet {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.spreadsheet th {
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  color: #57606a;
+  font-weight: 600;
+  border-bottom: 1px solid #e2e5ea;
+}
+
+.spreadsheet th.menu-col { width: 2rem; }
+
+.spreadsheet tbody tr {
+  position: relative;
+  border-bottom: 1px solid #edf0f3;
+}
+.spreadsheet tbody tr:hover { background: #fafbfc; }
+
+.spreadsheet td {
+  padding: 0.45rem 0.7rem;
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.spreadsheet td.editing {
+  padding: 0.25rem 0.4rem;
+}
+
+.spreadsheet td input {
+  width: 100%;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+}
+
+.row-menu-cell {
+  text-align: center;
+  cursor: default;
+}
+
+.row-menu-btn {
+  background: none;
+  color: #8a929c;
+  border: none;
+  padding: 0.2rem 0.5rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.spreadsheet tbody tr:hover .row-menu-btn { opacity: 1; }
+.row-menu-btn:hover { background: none; color: #1f2328; }
+
+/* Single shared floating menu (see #row-context-menu in index.html) —
+   fixed positioning means it's never clipped by the table, and it's
+   repositioned in JS next to whichever row's "⋮" button was clicked. */
+.row-context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  min-width: 130px;
+  overflow: hidden;
+}
+
+.row-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  color: #1f2328;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.85rem;
+  border-radius: 0;
+}
+.row-context-menu button:hover { background: #f6f7f9; }
+.row-context-menu button.menu-delete-btn { color: #dc2626; }
 
 /* ---- Live running-job log (Upload tab) ---- */
 #running-log-box { margin-top: 1rem; }

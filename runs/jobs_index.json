@@ -1,0 +1,26 @@
+{
+  "07dec629bfcb": {
+    "id": "07dec629bfcb",
+    "folder": "/Users/connorsapp/Downloads/9A_1.23-1.28.25_UCF30",
+    "country": "USA",
+    "state": "FL",
+    "status": "done",
+    "seq": 1,
+    "started_at": "2026-07-12T20:18:45",
+    "started_running_at": "2026-07-12T20:18:45",
+    "finished_at": "2026-07-12T20:19:03",
+    "output_json": "/Users/connorsapp/Downloads/speciesnet_web/runs/07dec629bfcb/predictions.json",
+    "log_file": "/Users/connorsapp/Downloads/speciesnet_web/runs/07dec629bfcb/log.txt",
+    "cmd": [
+      "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+      "-m",
+      "megadetector.detection.run_md_and_speciesnet",
+      "/Users/connorsapp/Downloads/9A_1.23-1.28.25_UCF30",
+      "/Users/connorsapp/Downloads/speciesnet_web/runs/07dec629bfcb/predictions.json",
+      "--country",
+      "USA",
+      "--state",
+      "FL"
+    ]
+  }
+}

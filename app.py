@@ -34,6 +34,8 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_from_directory, abort
 
+import bar_ocr
+
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -102,6 +104,16 @@ jobs = load_json(JOBS_INDEX_FILE, {})
 videos = load_json(VIDEOS_INDEX_FILE, {})
 canonical_species = load_json(SPECIES_LIST_FILE, [])
 
+# Videos created before Date/Time/Location/Count/Notes/Diel Period existed
+# won't have these keys — fill in defaults so the UI doesn't break on them.
+_NEW_FIELD_DEFAULTS = {
+    "date": None, "time": None, "location": None, "diel_period": None,
+    "count": 1, "notes": "", "display_filename": None, "metadata_edited": False,
+}
+for _v in videos.values():
+    for _key, _default in _NEW_FIELD_DEFAULTS.items():
+        _v.setdefault(_key, _v.get("filename") if _key == "display_filename" else _default)
+
 if jobs:
     _seq_counter = max((j.get("seq", 0) for j in jobs.values()), default=0)
 
@@ -114,6 +126,43 @@ for _job in sorted(jobs.values(), key=lambda j: j.get("seq", 0)):
         job_queue.append(_job["id"])
 
 
+def run_bar_ocr_safe(folder, filename):
+    """
+    Wraps bar_ocr's pipeline for one video file. Never raises — a single
+    unreadable clip or OCR hiccup shouldn't take down the whole job's sync;
+    it just gets blank date/time/location/diel_period, correctable by hand.
+    """
+    defaults = {"date": None, "time": None, "location": None, "diel_period": None}
+    try:
+        video_path = Path(folder) / filename
+        if not video_path.is_file():
+            return defaults
+        frame = bar_ocr.extract_first_frame(video_path)
+
+        raw_date = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["date"], whitelist="0123456789/-")
+        raw_time = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["time"], whitelist="0123456789:APM ")
+        location = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["location"])
+
+        parsed_date = bar_ocr.parse_date(raw_date)
+        parsed_time = bar_ocr.parse_time(raw_time)
+
+        result = dict(defaults)
+        result["location"] = location or None
+        if parsed_date:
+            result["date"] = parsed_date.isoformat()
+        if parsed_time:
+            result["time"] = f"{parsed_time[0]:02d}:{parsed_time[1]:02d}:{parsed_time[2]:02d}"
+        if parsed_date and parsed_time:
+            dt = datetime.combine(parsed_date, datetime.min.time()).replace(
+                hour=parsed_time[0], minute=parsed_time[1], second=parsed_time[2]
+            )
+            result["diel_period"] = bar_ocr.diel_period(dt, bar_ocr.ARBORETUM_LAT, bar_ocr.ARBORETUM_LON)
+        return result
+    except Exception as e:
+        print(f"OCR failed for {folder}/{filename}: {e}")
+        return defaults
+
+
 def video_id_for(job_id, filename):
     return hashlib.sha1(f"{job_id}:{filename}".encode()).hexdigest()[:16]
 
@@ -121,9 +170,12 @@ def video_id_for(job_id, filename):
 def sync_videos_from_job(job_id):
     """
     After a job finishes successfully, read its predictions.json and create/
-    update one library entry per video. Existing favorited/corrected_species
-    on a re-synced video are preserved — this never overwrites human input,
-    only the AI-derived fields.
+    update one library entry per video: species tag (from SpeciesNet), plus
+    Date/Time/Location/Diel Period (from OCR on the video's info bar, via
+    bar_ocr.py) and Count/Notes/File Name (user-editable, defaulted here).
+    Existing favorited/corrected_species/manually-edited fields on a
+    re-synced video are preserved — this never overwrites human input, only
+    the AI/OCR-derived fields.
     """
     with jobs_lock:
         job = jobs.get(job_id)
@@ -175,6 +227,22 @@ def sync_videos_from_job(job_id):
         vid = video_id_for(job_id, filename)
         with videos_lock:
             existing = videos.get(vid, {})
+
+            # Date/Time/Location/Diel Period come from OCR — UNLESS a human
+            # has already edited any of them, in which case ALL FOUR stay
+            # frozen at their current values. (Freezing all four together,
+            # not per-field, avoids a confusing half-OCR/half-manual mix if
+            # this job ever gets re-run.)
+            if existing.get("metadata_edited"):
+                ocr_fields = {
+                    "date": existing.get("date"),
+                    "time": existing.get("time"),
+                    "location": existing.get("location"),
+                    "diel_period": existing.get("diel_period"),
+                }
+            else:
+                ocr_fields = run_bar_ocr_safe(job["folder"], filename)
+
             videos[vid] = {
                 "id": vid,
                 "job_id": job_id,
@@ -186,6 +254,11 @@ def sync_videos_from_job(job_id):
                 "corrected_species": existing.get("corrected_species"),
                 "favorited": existing.get("favorited", False),
                 "corrected_at": existing.get("corrected_at"),
+                **ocr_fields,
+                "count": existing.get("count", 1),
+                "notes": existing.get("notes", ""),
+                "display_filename": existing.get("display_filename", filename),
+                "metadata_edited": existing.get("metadata_edited", False),
             }
     save_videos_index()
 
@@ -447,6 +520,58 @@ def correct_species(video_id):
         record = dict(videos[video_id])
     save_videos_index()
     return jsonify({**record, "display_species": display_species(record)})
+
+
+@app.route("/api/videos/<video_id>/update", methods=["POST"])
+def update_video_metadata(video_id):
+    """
+    Edits Date, Time, Location, Diel Period, Count, Notes, and/or File Name.
+    Any subset of these can be sent — only the provided keys are changed.
+    Editing date/time/location/diel_period marks the video as manually
+    edited, which freezes ALL FOUR against being overwritten by OCR if this
+    job is ever re-synced (see sync_videos_from_job).
+    """
+    data = request.get_json(force=True)
+    allowed_fields = {"date", "time", "location", "diel_period", "count", "notes", "display_filename"}
+    updates = {k: v for k, v in data.items() if k in allowed_fields}
+
+    if "count" in updates:
+        try:
+            count = int(updates["count"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "Count must be a whole number"}), 400
+        if count < 0:
+            return jsonify({"error": "Count can't be negative"}), 400
+        updates["count"] = count
+
+    with videos_lock:
+        if video_id not in videos:
+            return jsonify({"error": "Unknown video"}), 404
+        record = videos[video_id]
+
+        if any(f in updates for f in ("date", "time", "location", "diel_period")):
+            record["metadata_edited"] = True
+
+        record.update(updates)
+        result = dict(record)
+    save_videos_index()
+    return jsonify({**result, "display_species": display_species(result)})
+
+
+@app.route("/api/videos/<video_id>/delete", methods=["POST"])
+def delete_video(video_id):
+    """
+    Removes a video from the library's metadata only. The actual file on
+    disk is never touched — this just forgets the entry (species tag,
+    favorite, notes, etc.). If the same job folder is ever re-processed,
+    the video will simply reappear as a fresh, unedited entry.
+    """
+    with videos_lock:
+        if video_id not in videos:
+            return jsonify({"error": "Unknown video"}), 404
+        del videos[video_id]
+    save_videos_index()
+    return jsonify({"deleted": video_id})
 
 
 @app.route("/media/<video_id>")

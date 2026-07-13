@@ -33,6 +33,9 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
         loadFavorites();
       });
     }
+    if (btn.dataset.tab === "spreadsheet") {
+      loadSpreadsheet();
+    }
   });
 });
 
@@ -227,14 +230,24 @@ function renderGrid(videos, gridId, emptyId) {
     const favBtn = card.querySelector(".favorite-btn");
     favBtn.textContent = v.favorited ? "★" : "☆";
     if (v.favorited) favBtn.classList.add("active");
+    const whichTab = gridId === "lib-grid" ? "lib" : "fav";
     favBtn.addEventListener("click", () =>
-      toggleFavorite(v.id, !v.favorited, gridId === "lib-grid" ? "lib" : "fav")
+      toggleFavorite(v.id, !v.favorited, whichTab)
     );
+
+    const deleteBtn = card.querySelector(".delete-btn");
+    deleteBtn.addEventListener("click", async () => {
+      const ok = confirm(
+        `Delete "${v.filename}" from the library?\n\nThis only removes it from the library — the file on your computer is NOT deleted.`
+      );
+      if (!ok) return;
+      await deleteVideo(v.id);
+      await refreshSpeciesData(); // counts shift when a video disappears
+      if (whichTab === "lib") loadLibrary(); else loadFavorites();
+    });
 
     const correctionSelect = card.querySelector(".correction-select");
     buildCorrectionOptions(correctionSelect, v);
-
-    const whichTab = gridId === "lib-grid" ? "lib" : "fav";
 
     correctionSelect.addEventListener("change", () => {
       if (correctionSelect.value === "__add_new__") {
@@ -295,6 +308,12 @@ async function toggleFavorite(videoId, favorited, whichTab) {
     body: JSON.stringify({ favorited }),
   });
   if (whichTab === "lib") loadLibrary(); else loadFavorites();
+}
+
+async function deleteVideo(videoId) {
+  const res = await fetch(`/api/videos/${videoId}/delete`, { method: "POST" });
+  const data = await res.json();
+  if (data.error) alert(data.error);
 }
 
 async function saveCorrection(videoId, species) {
@@ -381,4 +400,233 @@ function renderModalList(query) {
 // stay empty until the user manually switches tabs and back.
 if (document.getElementById("tab-upload").classList.contains("active")) {
   pollQueue();
+}
+
+// ---- Spreadsheet tab ----
+const SPREADSHEET_FIELDS = ["date", "time", "location", "species", "count", "notes", "filename", "diel_period"];
+
+function stripExtension(name) {
+  const idx = name.lastIndexOf(".");
+  return idx > 0 ? name.slice(0, idx) : name;
+}
+
+async function loadSpreadsheet() {
+  const res = await fetch("/api/videos");
+  const vids = await res.json();
+  renderSpreadsheet(vids);
+}
+
+function renderSpreadsheet(videos) {
+  closeRowContextMenu();
+  const tbody = document.getElementById("spreadsheet-body");
+  const empty = document.getElementById("spreadsheet-empty");
+  tbody.innerHTML = "";
+
+  if (videos.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  videos.forEach(v => {
+    const tr = document.createElement("tr");
+    tr.dataset.videoId = v.id;
+
+    const values = {
+      date: v.date || "",
+      time: v.time || "",
+      location: v.location || "",
+      species: v.display_species || "",
+      count: v.count ?? 1,
+      notes: v.notes || "",
+      filename: stripExtension(v.display_filename || v.filename),
+      diel_period: v.diel_period || "",
+    };
+
+    SPREADSHEET_FIELDS.forEach(field => {
+      const td = document.createElement("td");
+      td.className = "editable";
+      td.dataset.field = field;
+      td.textContent = values[field];
+      td.addEventListener("click", () => startCellEdit(td, v.id));
+      tr.appendChild(td);
+    });
+
+    const menuTd = document.createElement("td");
+    menuTd.className = "row-menu-cell";
+
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "row-menu-btn";
+    menuBtn.textContent = "⋮";
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (contextMenuVideoId === v.id) {
+        closeRowContextMenu();
+      } else {
+        openRowContextMenu(menuBtn, tr, v.id);
+      }
+    });
+    menuTd.appendChild(menuBtn);
+
+    tr.appendChild(menuTd);
+    tbody.appendChild(tr);
+  });
+}
+
+// ---- Shared floating context menu (Spreadsheet row actions) ----
+// One menu instance for the whole table, repositioned next to whichever
+// row's "⋮" button was clicked and rendered fixed/on-top so it's never
+// clipped by the table's own layout — see openRowContextMenu below.
+let contextMenuVideoId = null;
+let contextMenuRow = null;
+
+function openRowContextMenu(button, tr, videoId) {
+  contextMenuVideoId = videoId;
+  contextMenuRow = tr;
+
+  const menu = document.getElementById("row-context-menu");
+  menu.classList.remove("hidden");
+
+  const buttonRect = button.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+
+  // Pop out to the LEFT of the button (it sits at the far right of the
+  // table) and vertically aligned with it, so it reads as "popping out the
+  // side" rather than dropping down below the row.
+  let left = buttonRect.left - menuRect.width - 8;
+  if (left < 8) left = buttonRect.right + 8; // not enough room on the left — flip to the right instead
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${buttonRect.top}px`;
+}
+
+function closeRowContextMenu() {
+  document.getElementById("row-context-menu").classList.add("hidden");
+  contextMenuVideoId = null;
+  contextMenuRow = null;
+}
+
+document.getElementById("ctx-copy-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (contextMenuRow) copyRowToClipboard(contextMenuRow);
+  closeRowContextMenu();
+});
+
+document.getElementById("ctx-delete-btn").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  const videoId = contextMenuVideoId;
+  const row = contextMenuRow;
+  closeRowContextMenu();
+  if (!videoId || !row) return;
+
+  const filenameText = row.querySelector('td[data-field="filename"]').textContent;
+  const ok = confirm(
+    `Delete "${filenameText}" from the library?\n\nThis only removes it from the library — the file on your computer is NOT deleted.`
+  );
+  if (!ok) return;
+  await deleteVideo(videoId);
+  loadSpreadsheet();
+});
+
+// Close the context menu when clicking anywhere else on the page.
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("row-context-menu");
+  if (!menu.classList.contains("hidden") && !menu.contains(e.target)) {
+    closeRowContextMenu();
+  }
+});
+
+function copyRowToClipboard(tr) {
+  const cells = SPREADSHEET_FIELDS.map(field =>
+    tr.querySelector(`td[data-field="${field}"]`).textContent
+  );
+  const line = cells.join("\t"); // real tab characters — Excel splits pasted
+                                  // tab-separated text into columns automatically
+  navigator.clipboard.writeText(line).catch(() => {
+    alert("Couldn't copy to clipboard — your browser may be blocking clipboard access on this page.");
+  });
+}
+
+function startCellEdit(td, videoId) {
+  if (td.querySelector("input")) return; // already editing
+  const field = td.dataset.field;
+  const originalValue = td.textContent;
+
+  td.classList.add("editing");
+  td.textContent = "";
+  const input = document.createElement("input");
+  input.type = field === "count" ? "number" : "text";
+  if (field === "count") input.min = "0";
+  input.value = originalValue;
+  td.appendChild(input);
+  input.focus();
+  input.select();
+
+  let settled = false;
+  const finish = async (shouldSave) => {
+    if (settled) return;
+    settled = true;
+
+    if (!shouldSave) {
+      td.classList.remove("editing");
+      td.textContent = originalValue;
+      return;
+    }
+
+    const newValue = input.value.trim();
+    const savedText = await saveCellEdit(videoId, field, newValue, originalValue);
+    td.classList.remove("editing");
+    td.textContent = savedText;
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") finish(true);
+    if (e.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+async function saveCellEdit(videoId, field, newValue, originalValue) {
+  if (field === "species") {
+    const res = await fetch(`/api/videos/${videoId}/correct`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ species: newValue }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+      return originalValue;
+    }
+    await refreshSpeciesData(); // counts changed — keep filters in sync elsewhere
+    return data.display_species;
+  }
+
+  if (field === "filename") {
+    const res = await fetch(`/api/videos/${videoId}/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_filename: newValue }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+      return originalValue;
+    }
+    return stripExtension(data.display_filename);
+  }
+
+  // date, time, location, count, diel_period — all plain fields on /update
+  const payload = { [field]: newValue };
+  const res = await fetch(`/api/videos/${videoId}/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return originalValue;
+  }
+  return field === "count" ? String(data.count) : (data[field] || "");
 }

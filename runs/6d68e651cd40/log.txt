@@ -1,0 +1,133 @@
+Running: /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -m megadetector.detection.run_md_and_speciesnet /Users/connorsapp/Downloads/8A /Users/connorsapp/Downloads/ArbCameraTrapCV/runs/6d68e651cd40/predictions.json --country USA --state FL
+
+/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/yolov5/utils/general.py:34: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources as pkg
+Fusing layers... 
+Model summary: 733 layers, 140054656 parameters, 0 gradients, 208.8 GFLOPs
+Processing folder: /Users/connorsapp/Downloads/8A
+Output file: /Users/connorsapp/Downloads/ArbCameraTrapCV/runs/6d68e651cd40/predictions.json
+Intermediate file folder: /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/400eedaa-7e2f-11f1-8f51-928dfb3f4597
+Starting detection step...
+Found 0 images and 91 videos
+Running MegaDetector on 91 videos...
+Model v5a.0.1 already exists and is valid at /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector_models/md_v5a.0.1.pt
+PyTorch reports 0 available CUDA devices (load_detector)
+PyTorch reports Metal Performance Shaders are available
+Loading PT detector with compatibility mode classic
+Loaded image size 1280 from model metadata
+Using model stride: 64
+Using MPS device
+PTDetector using device mps
+Processing 91 videos from folder /Users/connorsapp/Downloads/8A
+Processing video:   0%|          | 0/91 [00:00<?, ?it/s]Processing video:   1%|          | 1/91 [00:05<08:21,  5.57s/it]Processing video:   2%|▏         | 2/91 [00:12<09:15,  6.25s/it]Processing video:   3%|▎         | 3/91 [00:17<08:20,  5.68s/it]Processing video:   4%|▍         | 4/91 [00:22<07:48,  5.39s/it]Processing video:   5%|▌         | 5/91 [00:27<07:34,  5.28s/it]Processing video:   7%|▋         | 6/91 [00:32<07:18,  5.16s/it]Processing video:   8%|▊         | 7/91 [00:38<07:30,  5.37s/it]Processing video:   9%|▉         | 8/91 [00:43<07:18,  5.28s/it]Processing video:  10%|▉         | 9/91 [00:48<07:17,  5.33s/it]Processing video:  11%|█         | 10/91 [00:53<07:05,  5.25s/it]Processing video:  12%|█▏        | 11/91 [00:58<06:58,  5.23s/it]Processing video:  13%|█▎        | 12/91 [01:04<07:00,  5.33s/it]Processing video:  14%|█▍        | 13/91 [01:09<06:53,  5.30s/it]Processing video:  15%|█▌        | 14/91 [01:15<06:56,  5.41s/it]Processing video:  16%|█▋        | 15/91 [01:20<06:51,  5.42s/it]Processing video:  18%|█▊        | 16/91 [01:26<06:44,  5.39s/it]Processing video:  19%|█▊        | 17/91 [01:31<06:30,  5.27s/it]Processing video:  20%|█▉        | 18/91 [01:36<06:30,  5.35s/it]Processing video:  21%|██        | 19/91 [01:41<06:20,  5.28s/it]Processing video:  22%|██▏       | 20/91 [01:47<06:19,  5.34s/it]Processing video:  23%|██▎       | 21/91 [01:52<06:17,  5.40s/it]Processing video:  24%|██▍       | 22/91 [01:58<06:10,  5.37s/it]Processing video:  25%|██▌       | 23/91 [02:03<06:00,  5.30s/it]Processing video:  26%|██▋       | 24/91 [02:08<05:46,  5.17s/it]Processing video:  27%|██▋       | 25/91 [02:13<05:48,  5.28s/it]Processing video:  29%|██▊       | 26/91 [02:18<05:37,  5.19s/it]Processing video:  30%|██▉       | 27/91 [02:23<05:27,  5.11s/it]Processing video:  31%|███       | 28/91 [02:28<05:17,  5.04s/it]Processing video:  32%|███▏      | 29/91 [02:34<05:28,  5.29s/it]Processing video:  33%|███▎      | 30/91 [02:39<05:19,  5.24s/it]Processing video:  34%|███▍      | 31/91 [02:44<05:09,  5.16s/it]Processing video:  35%|███▌      | 32/91 [02:49<05:00,  5.09s/it]Processing video:  36%|███▋      | 33/91 [02:54<04:53,  5.07s/it]Processing video:  37%|███▋      | 34/91 [02:59<04:46,  5.03s/it]Processing video:  38%|███▊      | 35/91 [03:04<04:45,  5.10s/it]Processing video:  40%|███▉      | 36/91 [03:09<04:35,  5.01s/it]Processing video:  41%|████      | 37/91 [03:14<04:32,  5.04s/it]Processing video:  42%|████▏     | 38/91 [03:19<04:33,  5.16s/it]Processing video:  43%|████▎     | 39/91 [03:24<04:28,  5.16s/it]Processing video:  44%|████▍     | 40/91 [03:29<04:18,  5.07s/it]Processing video:  45%|████▌     | 41/91 [03:35<04:19,  5.19s/it]Processing video:  46%|████▌     | 42/91 [03:40<04:09,  5.08s/it]Processing video:  47%|████▋     | 43/91 [03:45<04:04,  5.09s/it]Processing video:  48%|████▊     | 44/91 [03:50<03:56,  5.02s/it]Processing video:  49%|████▉     | 45/91 [03:54<03:48,  4.97s/it]Processing video:  51%|█████     | 46/91 [04:00<03:45,  5.01s/it]Processing video:  52%|█████▏    | 47/91 [04:05<03:40,  5.01s/it]Processing video:  53%|█████▎    | 48/91 [04:09<03:32,  4.94s/it]Processing video:  54%|█████▍    | 49/91 [04:15<03:32,  5.05s/it]Processing video:  55%|█████▍    | 50/91 [04:20<03:25,  5.02s/it]Processing video:  56%|█████▌    | 51/91 [04:25<03:23,  5.08s/it]Processing video:  57%|█████▋    | 52/91 [04:30<03:13,  4.97s/it]Processing video:  58%|█████▊    | 53/91 [04:34<03:07,  4.93s/it]Processing video:  59%|█████▉    | 54/91 [04:39<03:02,  4.92s/it]Processing video:  60%|██████    | 55/91 [04:45<03:01,  5.04s/it]Processing video:  62%|██████▏   | 56/91 [04:50<02:58,  5.11s/it]Processing video:  63%|██████▎   | 57/91 [04:55<02:50,  5.02s/it]Processing video:  64%|██████▎   | 58/91 [05:00<02:44,  4.99s/it]Processing video:  65%|██████▍   | 59/91 [05:04<02:37,  4.94s/it]Processing video:  66%|██████▌   | 60/91 [05:09<02:33,  4.95s/it]Processing video:  67%|██████▋   | 61/91 [05:15<02:33,  5.11s/it]Processing video:  68%|██████▊   | 62/91 [05:20<02:26,  5.06s/it]Processing video:  69%|██████▉   | 63/91 [05:25<02:20,  5.02s/it]Processing video:  70%|███████   | 64/91 [05:30<02:14,  4.99s/it]Processing video:  71%|███████▏  | 65/91 [05:35<02:09,  4.99s/it]Processing video:  73%|███████▎  | 66/91 [05:39<02:03,  4.94s/it]Processing video:  74%|███████▎  | 67/91 [05:44<01:58,  4.93s/it]Processing video:  75%|███████▍  | 68/91 [05:49<01:52,  4.89s/it]Processing video:  76%|███████▌  | 69/91 [05:55<01:50,  5.04s/it]Processing video:  77%|███████▋  | 70/91 [05:59<01:44,  4.97s/it]Processing video:  78%|███████▊  | 71/91 [06:04<01:39,  4.99s/it]Processing video:  79%|███████▉  | 72/91 [06:10<01:35,  5.02s/it]Processing video:  80%|████████  | 73/91 [06:28<02:44,  9.15s/it]Processing video:  81%|████████▏ | 74/91 [06:56<04:08, 14.62s/it]Processing video:  82%|████████▏ | 75/91 [07:20<04:38, 17.41s/it]Processing video:  84%|████████▎ | 76/91 [07:44<04:51, 19.43s/it]Processing video:  85%|████████▍ | 77/91 [08:07<04:50, 20.73s/it]Processing video:  86%|████████▌ | 78/91 [08:32<04:43, 21.77s/it]Processing video:  87%|████████▋ | 79/91 [08:55<04:27, 22.32s/it]Processing video:  88%|████████▊ | 80/91 [09:19<04:10, 22.80s/it]Processing video:  89%|████████▉ | 81/91 [09:43<03:52, 23.22s/it]Processing video:  90%|█████████ | 82/91 [10:08<03:33, 23.77s/it]Processing video:  91%|█████████ | 83/91 [10:32<03:08, 23.62s/it]Processing video:  92%|█████████▏| 84/91 [10:56<02:45, 23.70s/it]Processing video:  93%|█████████▎| 85/91 [11:19<02:21, 23.66s/it]Processing video:  95%|█████████▍| 86/91 [11:43<01:58, 23.64s/it]Processing video:  96%|█████████▌| 87/91 [12:06<01:34, 23.63s/it]Processing video:  97%|█████████▋| 88/91 [12:30<01:10, 23.56s/it]Processing video:  98%|█████████▊| 89/91 [12:54<00:47, 23.69s/it]Processing video:  99%|█████████▉| 90/91 [13:18<00:23, 23.84s/it]Processing video: 100%|██████████| 91/91 [13:42<00:00, 23.76s/it]Processing video: 100%|██████████| 91/91 [13:42<00:00,  9.03s/it]
+Finished running MD on videos
+Output file saved at /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/400eedaa-7e2f-11f1-8f51-928dfb3f4597/detector_output_videos.json
+Video detection results written to /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/400eedaa-7e2f-11f1-8f51-928dfb3f4597/detector_output_videos.json
+Detection results written to /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/400eedaa-7e2f-11f1-8f51-928dfb3f4597/detector_output.json
+Starting classification step...
+Reading detection results from /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/400eedaa-7e2f-11f1-8f51-928dfb3f4597/detector_output.json
+Classification step loaded detection results for 91 images
+Using SpeciesNet classifier: kaggle:google/speciesnet/pyTorch/v4.0.3a/1
+Classification:   0%|          | 0/91 [00:00<?, ?it/s]Classification: 100%|██████████| 91/91 [00:00<00:00, 236335.40it/s]
+Warning: failed to preprocess crop from 10080015.MOV, detection 8: Input and output sizes should be greater than 0, but got input (H: 533, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10080015.MOV, detection 10: Input and output sizes should be greater than 0, but got input (H: 469, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160049.MOV, detection 5: Input and output sizes should be greater than 0, but got input (H: 545, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160048.MOV, detection 10: Input and output sizes should be greater than 0, but got input (H: 836, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160048.MOV, detection 11: Input and output sizes should be greater than 0, but got input (H: 724, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160048.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 526, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160048.MOV, detection 12: Input and output sizes should be greater than 0, but got input (H: 474, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160048.MOV, detection 19: Input and output sizes should be greater than 0, but got input (H: 445, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170052.MOV, detection 12: Input and output sizes should be greater than 0, but got input (H: 233, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160050.MOV, detection 21: Input and output sizes should be greater than 0, but got input (H: 351, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160050.MOV, detection 19: Input and output sizes should be greater than 0, but got input (H: 746, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10160050.MOV, detection 16: Input and output sizes should be greater than 0, but got input (H: 675, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170054.MOV, detection 4: Input and output sizes should be greater than 0, but got input (H: 484, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 8: Input and output sizes should be greater than 0, but got input (H: 575, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 6: Input and output sizes should be greater than 0, but got input (H: 616, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170056.MOV, detection 7: Input and output sizes should be greater than 0, but got input (H: 756, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 38: Input and output sizes should be greater than 0, but got input (H: 632, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 16: Input and output sizes should be greater than 0, but got input (H: 762, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170056.MOV, detection 26: Input and output sizes should be greater than 0, but got input (H: 621, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170056.MOV, detection 11: Input and output sizes should be greater than 0, but got input (H: 625, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170056.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 562, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170056.MOV, detection 31: Input and output sizes should be greater than 0, but got input (H: 530, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170058.MOV, detection 8: Input and output sizes should be greater than 0, but got input (H: 626, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170056.MOV, detection 21: Input and output sizes should be greater than 0, but got input (H: 432, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170058.MOV, detection 10: Input and output sizes should be greater than 0, but got input (H: 503, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 14: Input and output sizes should be greater than 0, but got input (H: 932, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 19: Input and output sizes should be greater than 0, but got input (H: 918, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170056.MOV, detection 23: Input and output sizes should be greater than 0, but got input (H: 372, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 0: Input and output sizes should be greater than 0, but got input (H: 1012, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 725, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10170057.MOV, detection 18: Input and output sizes should be greater than 0, but got input (H: 648, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10200066.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 519, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10200066.MOV, detection 8: Input and output sizes should be greater than 0, but got input (H: 683, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10180062.MOV, detection 8: Input and output sizes should be greater than 0, but got input (H: 129, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10180062.MOV, detection 17: Input and output sizes should be greater than 0, but got input (H: 127, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10200065.MOV, detection 7: Input and output sizes should be greater than 0, but got input (H: 709, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10200065.MOV, detection 12: Input and output sizes should be greater than 0, but got input (H: 476, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 2: Input and output sizes should be greater than 0, but got input (H: 928, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10200065.MOV, detection 5: Input and output sizes should be greater than 0, but got input (H: 519, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 4: Input and output sizes should be greater than 0, but got input (H: 579, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10220076.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 619, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 451, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10220076.MOV, detection 6: Input and output sizes should be greater than 0, but got input (H: 672, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210075.MOV, detection 8: Input and output sizes should be greater than 0, but got input (H: 638, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210075.MOV, detection 9: Input and output sizes should be greater than 0, but got input (H: 530, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 7: Input and output sizes should be greater than 0, but got input (H: 232, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10220078.MOV, detection 3: Input and output sizes should be greater than 0, but got input (H: 918, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 9: Input and output sizes should be greater than 0, but got input (H: 220, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 16: Input and output sizes should be greater than 0, but got input (H: 195, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10220078.MOV, detection 4: Input and output sizes should be greater than 0, but got input (H: 762, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10220078.MOV, detection 6: Input and output sizes should be greater than 0, but got input (H: 655, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 10: Input and output sizes should be greater than 0, but got input (H: 198, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 187, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 20: Input and output sizes should be greater than 0, but got input (H: 210, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10230080.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 425, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10220078.MOV, detection 11: Input and output sizes should be greater than 0, but got input (H: 541, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10230080.MOV, detection 16: Input and output sizes should be greater than 0, but got input (H: 371, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10230080.MOV, detection 18: Input and output sizes should be greater than 0, but got input (H: 532, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10220078.MOV, detection 5: Input and output sizes should be greater than 0, but got input (H: 478, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 12: Input and output sizes should be greater than 0, but got input (H: 183, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 25: Input and output sizes should be greater than 0, but got input (H: 132, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10230080.MOV, detection 4: Input and output sizes should be greater than 0, but got input (H: 634, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10230080.MOV, detection 3: Input and output sizes should be greater than 0, but got input (H: 906, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10210072.MOV, detection 30: Input and output sizes should be greater than 0, but got input (H: 113, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10230080.MOV, detection 6: Input and output sizes should be greater than 0, but got input (H: 871, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10250088.MOV, detection 6: Input and output sizes should be greater than 0, but got input (H: 934, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10250088.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 680, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10250088.MOV, detection 12: Input and output sizes should be greater than 0, but got input (H: 483, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10250088.MOV, detection 25: Input and output sizes should be greater than 0, but got input (H: 212, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280099.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 645, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10250088.MOV, detection 24: Input and output sizes should be greater than 0, but got input (H: 174, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280097.MOV, detection 11: Input and output sizes should be greater than 0, but got input (H: 128, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280099.MOV, detection 0: Input and output sizes should be greater than 0, but got input (H: 402, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280097.MOV, detection 10: Input and output sizes should be greater than 0, but got input (H: 135, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280099.MOV, detection 3: Input and output sizes should be greater than 0, but got input (H: 272, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280100.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 265, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280101.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 272, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280099.MOV, detection 5: Input and output sizes should be greater than 0, but got input (H: 129, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280101.MOV, detection 3: Input and output sizes should be greater than 0, but got input (H: 182, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280101.MOV, detection 0: Input and output sizes should be greater than 0, but got input (H: 202, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280102.MOV, detection 11: Input and output sizes should be greater than 0, but got input (H: 273, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280102.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 735, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280102.MOV, detection 4: Input and output sizes should be greater than 0, but got input (H: 615, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280102.MOV, detection 2: Input and output sizes should be greater than 0, but got input (H: 220, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10280102.MOV, detection 6: Input and output sizes should be greater than 0, but got input (H: 187, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10300111.MOV, detection 2: Input and output sizes should be greater than 0, but got input (H: 499, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10300111.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 236, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10300111.MOV, detection 10: Input and output sizes should be greater than 0, but got input (H: 213, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10300111.MOV, detection 8: Input and output sizes should be greater than 0, but got input (H: 184, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10310112.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 89, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10310114.MOV, detection 13: Input and output sizes should be greater than 0, but got input (H: 216, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 11010118.MOV, detection 9: Input and output sizes should be greater than 0, but got input (H: 113, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 11010118.MOV, detection 7: Input and output sizes should be greater than 0, but got input (H: 109, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 10310114.MOV, detection 16: Input and output sizes should be greater than 0, but got input (H: 225, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 11010124.MOV, detection 3: Input and output sizes should be greater than 0, but got input (H: 169, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 11010125.MOV, detection 3: Input and output sizes should be greater than 0, but got input (H: 196, W: 0) output (H: 480, W: 480)
+Warning: failed to preprocess crop from 11040131.MOV, detection 1: Input and output sizes should be greater than 0, but got input (H: 880, W: 0) output (H: 480, W: 480)
+Finished waiting for input queue
+Finished waiting for workers
+Writing output file
+Processing complete in 19 minutes and 32.74 seconds
+Results written to: /Users/connorsapp/Downloads/ArbCameraTrapCV/runs/6d68e651cd40/predictions.json

@@ -8,12 +8,13 @@
 <body>
 
 <div class="app">
-  <h1><span id="title-emoji">🦝</span> UCF Arboretum Trail Cam Species Library</h1>
+  <h1><span id="title-emoji">🦝</span> Trail Cam Species Library</h1>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="upload">Upload</button>
     <button class="tab-btn" data-tab="library">Library</button>
     <button class="tab-btn" data-tab="favorites">Favorites</button>
+    <button class="tab-btn" data-tab="spreadsheet">Spreadsheet</button>
   </div>
 
   <!-- UPLOAD TAB -->
@@ -77,6 +78,29 @@
     <div id="fav-grid" class="video-grid"></div>
     <div id="fav-empty" class="muted hidden">No favorited videos yet — star some from the Library tab.</div>
   </section>
+
+  <!-- SPREADSHEET TAB -->
+  <section id="tab-spreadsheet" class="tab-panel">
+    <div class="card">
+      <table id="spreadsheet-table" class="spreadsheet">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Location</th>
+            <th>Species</th>
+            <th>Count</th>
+            <th>Notes</th>
+            <th>File Name</th>
+            <th>Diel Period</th>
+            <th class="menu-col"></th>
+          </tr>
+        </thead>
+        <tbody id="spreadsheet-body"></tbody>
+      </table>
+      <div id="spreadsheet-empty" class="muted hidden">No videos yet.</div>
+    </div>
+  </section>
 </div>
 
 <!-- Video card template, cloned by JS for both Library and Favorites -->
@@ -87,7 +111,10 @@
       <div class="video-filename"></div>
       <div class="video-tag-row">
         <span class="species-badge"></span>
-        <button class="favorite-btn" title="Favorite">☆</button>
+        <div class="card-actions">
+          <button class="favorite-btn" title="Favorite">☆</button>
+          <button class="delete-btn" title="Delete from library">🗑️</button>
+        </div>
       </div>
       <div class="correction-row">
         <select class="correction-select"></select>
@@ -108,6 +135,15 @@
     <input type="text" id="modal-search" placeholder="Search all SpeciesNet species…">
     <div id="modal-species-list" class="modal-species-list"></div>
   </div>
+</div>
+
+<!-- Shared floating row-actions menu for the Spreadsheet tab. One instance,
+     repositioned and rebound to whichever row's "..." button was clicked —
+     rendered as a fixed-position overlay so it's never clipped by the
+     table's own layout/scrolling. -->
+<div id="row-context-menu" class="row-context-menu hidden">
+  <button id="ctx-copy-btn">Copy row</button>
+  <button id="ctx-delete-btn" class="menu-delete-btn">Delete</button>
 </div>
 
 <script src="{{ url_for('static', filename='script.js') }}"></script>
