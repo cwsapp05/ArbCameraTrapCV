@@ -1,36 +1,0 @@
-Running: /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -m megadetector.detection.run_md_and_speciesnet /Users/connorsapp/Downloads/9A_1.23-1.28.25_UCF30 /Users/connorsapp/Downloads/speciesnet_web/runs/07dec629bfcb/predictions.json --country USA --state FL
-
-/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/yolov5/utils/general.py:34: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
-  import pkg_resources as pkg
-Fusing layers... 
-Model summary: 733 layers, 140054656 parameters, 0 gradients, 208.8 GFLOPs
-Processing folder: /Users/connorsapp/Downloads/9A_1.23-1.28.25_UCF30
-Output file: /Users/connorsapp/Downloads/speciesnet_web/runs/07dec629bfcb/predictions.json
-Intermediate file folder: /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/6af468ee-7e50-11f1-880f-928dfb3f4597
-Starting detection step...
-Found 0 images and 2 videos
-Running MegaDetector on 2 videos...
-Model v5a.0.1 already exists and is valid at /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector_models/md_v5a.0.1.pt
-PyTorch reports 0 available CUDA devices (load_detector)
-PyTorch reports Metal Performance Shaders are available
-Loading PT detector with compatibility mode classic
-Loaded image size 1280 from model metadata
-Using model stride: 64
-Using MPS device
-PTDetector using device mps
-Processing 2 videos from folder /Users/connorsapp/Downloads/9A_1.23-1.28.25_UCF30
-Processing video:   0%|          | 0/2 [00:00<?, ?it/s]Processing video:  50%|█████     | 1/2 [00:06<00:06,  6.01s/it]Processing video: 100%|██████████| 2/2 [00:11<00:00,  5.86s/it]Processing video: 100%|██████████| 2/2 [00:11<00:00,  5.89s/it]
-Finished running MD on videos
-Output file saved at /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/6af468ee-7e50-11f1-880f-928dfb3f4597/detector_output_videos.json
-Video detection results written to /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/6af468ee-7e50-11f1-880f-928dfb3f4597/detector_output_videos.json
-Detection results written to /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/6af468ee-7e50-11f1-880f-928dfb3f4597/detector_output.json
-Starting classification step...
-Reading detection results from /var/folders/7l/s2wzttg15750kt0wl7shsfvc0000gn/T/megadetector/run_md_and_speciesnet/6af468ee-7e50-11f1-880f-928dfb3f4597/detector_output.json
-Classification step loaded detection results for 2 images
-Using SpeciesNet classifier: kaggle:google/speciesnet/pyTorch/v4.0.3a/1
-Classification:   0%|          | 0/2 [00:00<?, ?it/s]Classification: 100%|██████████| 2/2 [00:00<00:00, 20020.54it/s]
-Finished waiting for input queue
-Finished waiting for workers
-Writing output file
-Processing complete in 15.07 seconds
-Results written to: /Users/connorsapp/Downloads/speciesnet_web/runs/07dec629bfcb/predictions.json
