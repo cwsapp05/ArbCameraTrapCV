@@ -74,6 +74,13 @@ def _next_seq():
 job_queue = collections.deque()
 queue_cv = threading.Condition()
 
+# job_id -> subprocess.Popen, only while that job is actively running. This
+# is what makes cancellation of a RUNNING job possible — subprocess.run()
+# blocks until completion with no way to interrupt it, so we use Popen and
+# keep a handle around instead.
+running_processes = {}
+running_processes_lock = threading.Lock()
+
 
 def load_json(path, default):
     if path.exists():
@@ -292,9 +299,19 @@ def _execute_job(job_id):
         with open(log_file, "w") as log:
             log.write("Running: " + " ".join(cmd) + "\n\n")
             log.flush()
-            result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
-        status = "done" if result.returncode == 0 else "error"
+            proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+            with running_processes_lock:
+                running_processes[job_id] = proc
+            returncode = proc.wait()
+        with running_processes_lock:
+            running_processes.pop(job_id, None)
+
+        with jobs_lock:
+            was_cancelling = jobs[job_id]["status"] == "cancelling"
+        status = "cancelled" if was_cancelling else ("done" if returncode == 0 else "error")
     except Exception as e:
+        with running_processes_lock:
+            running_processes.pop(job_id, None)
         status = "error"
         with open(log_file, "a") as log:
             log.write(f"\nException while running job: {e}\n")
@@ -306,6 +323,19 @@ def _execute_job(job_id):
 
     if status == "done":
         sync_videos_from_job(job_id)
+
+
+def _terminate_then_kill(proc):
+    """SIGTERM first (graceful), escalate to SIGKILL if it doesn't die soon —
+    some subprocesses (PyTorch/CUDA cleanup, etc.) can take a moment or
+    ignore SIGTERM outright."""
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    except Exception:
+        pass
 
 
 def queue_position(job_id):
@@ -438,13 +468,62 @@ def get_queue():
     disappears just because someone (including you) queues another job.
     """
     with jobs_lock:
-        running = [j for j in jobs.values() if j["status"] == "running"]
+        # "cancelling" still occupies the worker thread, so it's shown
+        # alongside "running" rather than disappearing from the panel.
+        running = [j for j in jobs.values() if j["status"] in ("running", "cancelling")]
         queued = sorted(
             (j for j in jobs.values() if j["status"] == "queued"),
             key=lambda j: j["seq"],
         )
     running_with_logs = [{**j, "log_tail": _log_tail_for(j)} for j in running]
     return jsonify({"running": running_with_logs, "queued": queued})
+
+
+@app.route("/api/jobs/<job_id>/cancel", methods=["POST"])
+def cancel_job(job_id):
+    """
+    Cancels a queued job outright (just removes it from the line — it never
+    started), or asks a running job to stop (SIGTERM, escalating to SIGKILL
+    if it doesn't exit within 5s — see _terminate_then_kill). Useful when the
+    wrong folder got submitted by mistake.
+    """
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "Unknown job"}), 404
+        status = job["status"]
+
+    if status == "queued":
+        with queue_cv:
+            try:
+                job_queue.remove(job_id)
+            except ValueError:
+                pass  # worker already picked it up between our check and now — fall through below
+
+        with jobs_lock:
+            still_queued = jobs[job_id]["status"] == "queued"
+            if still_queued:
+                jobs[job_id]["status"] = "cancelled"
+                jobs[job_id]["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            else:
+                status = jobs[job_id]["status"]  # it started running in the meantime — fall through below
+
+        if still_queued:
+            save_jobs_index()  # called AFTER releasing jobs_lock — save_jobs_index acquires it itself
+            return jsonify({"status": "cancelled"})
+
+    if status == "running":
+        with running_processes_lock:
+            proc = running_processes.get(job_id)
+        if proc is None:
+            return jsonify({"error": "Job is running but has no process handle (may be finishing up)"}), 409
+        with jobs_lock:
+            jobs[job_id]["status"] = "cancelling"
+        save_jobs_index()
+        threading.Thread(target=_terminate_then_kill, args=(proc,), daemon=True).start()
+        return jsonify({"status": "cancelling"})
+
+    return jsonify({"error": f"Job is already '{status}' — nothing to cancel"}), 400
 
 
 @app.route("/api/species")

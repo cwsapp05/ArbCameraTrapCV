@@ -127,7 +127,7 @@ function updateRunningLog(runningJobs) {
 
   const job = runningJobs[0]; // single worker thread — at most one running job
   box.classList.remove("hidden");
-  label.textContent = "Processing: " + job.folder;
+  label.textContent = (job.status === "cancelling" ? "Cancelling: " : "Processing: ") + job.folder;
   tail.textContent = job.log_tail || "";
   tail.scrollTop = tail.scrollHeight;
   lastRunningJobId = job.id;
@@ -142,10 +142,35 @@ function queueItem(job, kind, position) {
   folder.textContent = job.folder;
   li.appendChild(folder);
 
+  const right = document.createElement("div");
+  right.className = "queue-right";
+
+  const isCancelling = job.status === "cancelling";
+
   const badge = document.createElement("span");
   badge.className = "queue-badge " + (kind === "running" ? "badge-running" : "badge-queued");
-  badge.textContent = kind === "running" ? "Running" : `Queued #${position}`;
-  li.appendChild(badge);
+  badge.textContent = isCancelling ? "Cancelling…" : (kind === "running" ? "Running" : `Queued #${position}`);
+  right.appendChild(badge);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "cancel-job-btn";
+  cancelBtn.textContent = isCancelling ? "Cancelling…" : "Cancel";
+  cancelBtn.disabled = isCancelling;
+  cancelBtn.addEventListener("click", async () => {
+    const ok = confirm(`Cancel processing for "${job.folder}"?`);
+    if (!ok) return;
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = "Cancelling…";
+    const res = await fetch(`/api/jobs/${job.id}/cancel`, { method: "POST" });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+    }
+    pollQueue(); // refresh right away rather than waiting for the next tick
+  });
+  right.appendChild(cancelBtn);
+
+  li.appendChild(right);
 
   return li;
 }
@@ -630,3 +655,38 @@ async function saveCellEdit(videoId, field, newValue, originalValue) {
   }
   return field === "count" ? String(data.count) : (data[field] || "");
 }
+
+// ---- Video popup modal (Spreadsheet "Show video") ----
+document.getElementById("ctx-show-video-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const videoId = contextMenuVideoId;
+  closeRowContextMenu();
+  if (videoId) showVideoModal(videoId);
+});
+
+function showVideoModal(videoId) {
+  const modal = document.getElementById("video-modal");
+  const player = document.getElementById("video-modal-player");
+  player.src = "/media/" + videoId;
+  modal.classList.remove("hidden");
+  player.play().catch(() => {}); // browser may block autoplay — not an error, just ignore
+}
+
+function closeVideoModal() {
+  const modal = document.getElementById("video-modal");
+  const player = document.getElementById("video-modal-player");
+  player.pause();
+  player.removeAttribute("src");
+  player.load(); // fully releases the video, stops any buffering/playback
+  modal.classList.add("hidden");
+}
+
+document.getElementById("video-modal-close-btn").addEventListener("click", closeVideoModal);
+document.getElementById("video-modal").addEventListener("click", (e) => {
+  if (e.target.id === "video-modal") closeVideoModal(); // clicking the dim backdrop also closes it
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !document.getElementById("video-modal").classList.contains("hidden")) {
+    closeVideoModal();
+  }
+});

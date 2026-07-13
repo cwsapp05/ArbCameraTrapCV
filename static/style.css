@@ -174,6 +174,19 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .badge-running { background: #dbeafe; color: #1d4ed8; }
 .badge-queued { background: #f1f3f5; color: #57606a; }
 
+.queue-right { display: flex; align-items: center; gap: 0.5rem; }
+
+.cancel-job-btn {
+  background: none;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  border-radius: 999px;
+}
+.cancel-job-btn:hover { background: #fef2f2; }
+.cancel-job-btn:disabled { color: #b0b6bd; border-color: #e2e5ea; background: none; cursor: not-allowed; }
+
 /* ---- Video grid / cards ---- */
 .video-grid {
   display: grid;
@@ -415,3 +428,32 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 .modal-species-item:hover { background: #f6f7f9; }
 .modal-species-item .count { color: #8a929c; font-size: 0.8rem; }
+
+/* ---- Video popup modal ---- */
+.video-modal-box {
+  position: relative;
+  background: black;
+  border-radius: 10px;
+  max-width: 90vw;
+  max-height: 85vh;
+  padding: 0;
+  display: flex;
+}
+
+.video-modal-box video {
+  max-width: 90vw;
+  max-height: 85vh;
+  border-radius: 10px;
+  display: block;
+}
+
+.video-modal-close {
+  position: absolute;
+  top: -2.2rem;
+  right: 0;
+  color: white;
+  background: none;
+  font-size: 1.3rem;
+  padding: 0.2rem 0.5rem;
+}
+.video-modal-close:hover { background: none; color: #d0d5dc; }
