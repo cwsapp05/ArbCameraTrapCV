@@ -456,6 +456,19 @@ function renderSpreadsheet(videos) {
   videos.forEach(v => {
     const tr = document.createElement("tr");
     tr.dataset.videoId = v.id;
+    tr.dataset.favorited = v.favorited ? "1" : "0";
+
+    const arrowTd = document.createElement("td");
+    arrowTd.className = "arrow-cell";
+    if (v.has_bar_crop) {
+      const arrowBtn = document.createElement("button");
+      arrowBtn.className = "bar-crop-btn";
+      arrowBtn.textContent = "▸";
+      arrowBtn.title = "Show cropped info bar";
+      arrowBtn.addEventListener("click", () => toggleBarCropRow(tr, arrowBtn, v.id));
+      arrowTd.appendChild(arrowBtn);
+    }
+    tr.appendChild(arrowTd);
 
     const values = {
       date: v.date || "",
@@ -509,6 +522,9 @@ function openRowContextMenu(button, tr, videoId) {
   contextMenuVideoId = videoId;
   contextMenuRow = tr;
 
+  const isFavorited = tr.dataset.favorited === "1";
+  document.getElementById("ctx-favorite-btn").textContent = isFavorited ? "★ Unfavorite" : "☆ Favorite";
+
   const menu = document.getElementById("row-context-menu");
   menu.classList.remove("hidden");
 
@@ -530,6 +546,22 @@ function closeRowContextMenu() {
   contextMenuVideoId = null;
   contextMenuRow = null;
 }
+
+document.getElementById("ctx-favorite-btn").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  const videoId = contextMenuVideoId;
+  const row = contextMenuRow;
+  closeRowContextMenu();
+  if (!videoId || !row) return;
+
+  const newFavorited = row.dataset.favorited !== "1";
+  await fetch(`/api/videos/${videoId}/favorite`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ favorited: newFavorited }),
+  });
+  row.dataset.favorited = newFavorited ? "1" : "0";
+});
 
 document.getElementById("ctx-copy-btn").addEventListener("click", (e) => {
   e.stopPropagation();
@@ -565,6 +597,11 @@ function copyRowToClipboard(tr) {
   const cells = SPREADSHEET_FIELDS.map(field =>
     tr.querySelector(`td[data-field="${field}"]`).textContent
   );
+  // One empty column between File Name and Diel Period — reserved space for
+  // the NR team's own "Bookmark" column in their Excel sheet, so a pasted
+  // row lines up with their existing layout instead of shifting everything
+  // after File Name over by one.
+  cells.splice(cells.length - 1, 0, "");
   const line = cells.join("\t"); // real tab characters — Excel splits pasted
                                   // tab-separated text into columns automatically
   navigator.clipboard.writeText(line).catch(() => {
@@ -690,3 +727,34 @@ document.addEventListener("keydown", (e) => {
     closeVideoModal();
   }
 });
+
+// ---- Bar-crop dropdown row (Spreadsheet left-side arrow button) ----
+// Expands a row directly beneath the clicked one, spanning the full table
+// width, showing the saved info-bar crop image. Toggling the same row's
+// arrow again collapses it; each row's dropdown is independent, so more
+// than one can be open at a time for side-by-side comparison.
+function toggleBarCropRow(tr, arrowBtn, videoId) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("bar-crop-row")) {
+    next.remove();
+    arrowBtn.classList.remove("expanded");
+    return;
+  }
+
+  const totalColumns = 2 + SPREADSHEET_FIELDS.length; // arrow column + fields + menu column
+  const dropRow = document.createElement("tr");
+  dropRow.className = "bar-crop-row";
+
+  const td = document.createElement("td");
+  td.colSpan = totalColumns;
+
+  const img = document.createElement("img");
+  img.className = "bar-crop-inline-img";
+  img.alt = "Cropped info bar";
+  img.src = `/api/videos/${videoId}/bar-crop`;
+  td.appendChild(img);
+
+  dropRow.appendChild(td);
+  tr.after(dropRow);
+  arrowBtn.classList.add("expanded");
+}

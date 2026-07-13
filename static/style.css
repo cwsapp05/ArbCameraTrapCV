@@ -289,6 +289,39 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 
 .spreadsheet th.menu-col { width: 2rem; }
+.spreadsheet th.arrow-col { width: 1.75rem; }
+
+.arrow-cell {
+  text-align: center;
+  cursor: default;
+  padding: 0.45rem 0.3rem !important;
+}
+
+.bar-crop-btn {
+  background: none;
+  color: #8a929c;
+  border: none;
+  font-size: 0.95rem;
+  padding: 0.1rem 0.3rem;
+  line-height: 1;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+.bar-crop-btn:hover { background: none; color: #2563eb; }
+.bar-crop-btn.expanded { transform: rotate(90deg); color: #2563eb; }
+
+.bar-crop-row td {
+  background: #fafbfc;
+  padding: 0.7rem !important;
+  text-align: center;
+  cursor: default;
+}
+
+.bar-crop-inline-img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid #e2e5ea;
+}
 
 .spreadsheet tbody tr {
   position: relative;
@@ -440,7 +473,7 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   display: flex;
 }
 
-.video-modal-box video {
+.video-modal-box video, .video-modal-box img {
   max-width: 90vw;
   max-height: 85vh;
   border-radius: 10px;

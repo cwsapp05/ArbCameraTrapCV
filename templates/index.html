@@ -8,7 +8,7 @@
 <body>
 
 <div class="app">
-  <h1><span id="title-emoji">🦝</span> Trail Cam Species Library</h1>
+  <h1><span id="title-emoji">🦝</span> UCF Arboretum Trail Cam Species Library</h1>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="upload">Upload</button>
@@ -85,6 +85,7 @@
       <table id="spreadsheet-table" class="spreadsheet">
         <thead>
           <tr>
+            <th class="arrow-col"></th>
             <th>Date</th>
             <th>Time</th>
             <th>Location</th>
@@ -143,6 +144,7 @@
      table's own layout/scrolling. -->
 <div id="row-context-menu" class="row-context-menu hidden">
   <button id="ctx-show-video-btn">Show video</button>
+  <button id="ctx-favorite-btn">☆ Favorite</button>
   <button id="ctx-copy-btn">Copy row</button>
   <button id="ctx-delete-btn" class="menu-delete-btn">Delete</button>
 </div>

@@ -41,6 +41,8 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).parent.resolve()
 RUNS_DIR = BASE_DIR / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
+BAR_CROPS_DIR = RUNS_DIR / "bar_crops"
+BAR_CROPS_DIR.mkdir(exist_ok=True)
 JOBS_INDEX_FILE = RUNS_DIR / "jobs_index.json"
 VIDEOS_INDEX_FILE = RUNS_DIR / "videos_index.json"
 SPECIES_LIST_FILE = RUNS_DIR / "species_list.json"
@@ -116,6 +118,7 @@ canonical_species = load_json(SPECIES_LIST_FILE, [])
 _NEW_FIELD_DEFAULTS = {
     "date": None, "time": None, "location": None, "diel_period": None,
     "count": 1, "notes": "", "display_filename": None, "metadata_edited": False,
+    "has_bar_crop": False,
 }
 for _v in videos.values():
     for _key, _default in _NEW_FIELD_DEFAULTS.items():
@@ -168,6 +171,25 @@ def run_bar_ocr_safe(folder, filename):
     except Exception as e:
         print(f"OCR failed for {folder}/{filename}: {e}")
         return defaults
+
+
+def save_bar_crop_safe(folder, filename, video_id):
+    """
+    Saves the full info-bar QA crop for one video to BAR_CROPS_DIR, named by
+    video_id. Never raises — same reasoning as run_bar_ocr_safe: one bad clip
+    shouldn't take down the whole job's sync. Returns True/False for whether
+    it succeeded (used to decide whether the "show crop" button should exist).
+    """
+    try:
+        video_path = Path(folder) / filename
+        if not video_path.is_file():
+            return False
+        output_path = BAR_CROPS_DIR / f"{video_id}.png"
+        bar_ocr.save_bar_crop(video_path, output_path)
+        return True
+    except Exception as e:
+        print(f"Bar crop save failed for {folder}/{filename}: {e}")
+        return False
 
 
 def video_id_for(job_id, filename):
@@ -232,6 +254,8 @@ def sync_videos_from_job(job_id):
             )
 
         vid = video_id_for(job_id, filename)
+        has_bar_crop = save_bar_crop_safe(job["folder"], filename, vid)
+
         with videos_lock:
             existing = videos.get(vid, {})
 
@@ -266,6 +290,7 @@ def sync_videos_from_job(job_id):
                 "notes": existing.get("notes", ""),
                 "display_filename": existing.get("display_filename", filename),
                 "metadata_edited": existing.get("metadata_edited", False),
+                "has_bar_crop": has_bar_crop,
             }
     save_videos_index()
 
@@ -643,14 +668,34 @@ def delete_video(video_id):
     Removes a video from the library's metadata only. The actual file on
     disk is never touched — this just forgets the entry (species tag,
     favorite, notes, etc.). If the same job folder is ever re-processed,
-    the video will simply reappear as a fresh, unedited entry.
+    the video will simply reappear as a fresh, unedited entry. The saved
+    bar-crop QA image (our own generated artifact, not the user's file) IS
+    cleaned up, since there's no reason to leave it orphaned on disk.
     """
     with videos_lock:
         if video_id not in videos:
             return jsonify({"error": "Unknown video"}), 404
         del videos[video_id]
     save_videos_index()
+
+    crop_path = BAR_CROPS_DIR / f"{video_id}.png"
+    crop_path.unlink(missing_ok=True)
+
     return jsonify({"deleted": video_id})
+
+
+@app.route("/api/videos/<video_id>/bar-crop")
+def serve_bar_crop(video_id):
+    """Serves the saved full-info-bar QA crop for one video, generated at
+    upload time (see save_bar_crop_safe in sync_videos_from_job)."""
+    with videos_lock:
+        record = videos.get(video_id)
+    if not record:
+        abort(404)
+    crop_path = BAR_CROPS_DIR / f"{video_id}.png"
+    if not crop_path.is_file():
+        abort(404)
+    return send_from_directory(str(BAR_CROPS_DIR), f"{video_id}.png")
 
 
 @app.route("/media/<video_id>")

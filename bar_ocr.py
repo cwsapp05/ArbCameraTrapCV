@@ -68,6 +68,20 @@ def extract_first_frame(video_path):
     return frame
 
 
+# The FULL info bar strip (Date + Time + Location all together), used for
+# visual QA in the web app — lets someone glance at what the camera actually
+# printed, side by side with what OCR extracted, without opening the video.
+BAR_QA_CROP_BOX = (288, 1012, 1307, 1064)  # left, top, right, bottom
+
+
+def save_bar_crop(video_path, output_path):
+    """Extract the first frame, crop to the full info bar, and save as a PNG."""
+    frame = extract_first_frame(video_path)
+    left, top, right, bottom = BAR_QA_CROP_BOX
+    crop = frame[top:bottom, left:right]
+    cv2.imwrite(str(output_path), crop)
+
+
 def preprocess_for_ocr(crop):
     """Grayscale + threshold + upscale — this kind of high-contrast digital
     overlay text OCRs far better after this than as raw color pixels."""
