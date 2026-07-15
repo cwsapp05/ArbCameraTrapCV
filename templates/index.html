@@ -8,7 +8,7 @@
 <body>
 
 <div class="app">
-  <h1><span id="title-emoji">🦝</span> UCF Arboretum Trail Cam Species Library</h1>
+  <h1><span id="title-emoji">🦝</span> Trail Cam Species Library</h1>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="upload">Upload</button>
@@ -125,6 +125,7 @@
 <!-- Video card template, cloned by JS for both Library and Favorites -->
 <template id="video-card-template">
   <div class="video-card">
+    <span class="unreviewed-corner-bubble hidden" title="Not yet reviewed">!</span>
     <video controls preload="metadata"></video>
     <div class="video-card-body">
       <div class="video-filename"></div>

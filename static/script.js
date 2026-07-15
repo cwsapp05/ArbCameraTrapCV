@@ -1,4 +1,5 @@
 let queuePollTimer = null;
+let lastQueueSize = 0; // used by pollQueue to detect "a job just finished" (size decreased)
 let allSpecies = [];        // full taxonomy from /api/species, INCLUDES zero-count entries
 let speciesWithClips = [];  // allSpecies filtered to count > 0 — used for dropdowns
 let modalTargetVideoId = null;
@@ -106,6 +107,16 @@ function pollQueue() {
 
       updateRunningLog(data.running);
 
+      // A drop in total in-progress jobs (running + queued) means one just
+      // finished — success, error, or cancelled all count. Refresh Library's
+      // unreviewed counts/badges so they update live instead of staying
+      // stale until the tab is revisited or the page is refreshed.
+      const currentQueueSize = data.running.length + data.queued.length;
+      if (currentQueueSize < lastQueueSize) {
+        refreshSpeciesData();
+      }
+      lastQueueSize = currentQueueSize;
+
       if (document.getElementById("tab-upload").classList.contains("active")) {
         queuePollTimer = setTimeout(pollQueue, 2000);
       }
@@ -174,10 +185,42 @@ function queueItem(job, kind, position) {
 }
 
 // ---- Species data ----
+let unreviewedCountsBySpecies = {}; // display_species -> count of videos still on the AI's original guess
+let totalUnreviewedCount = 0;       // across the whole library, regardless of species
+
 async function refreshSpeciesData() {
-  const res = await fetch("/api/species");
-  allSpecies = await res.json();
+  const [speciesRes, videosRes] = await Promise.all([
+    fetch("/api/species"),
+    fetch("/api/videos"),
+  ]);
+  allSpecies = await speciesRes.json();
   speciesWithClips = allSpecies.filter(s => s.count > 0);
+
+  const vids = await videosRes.json();
+  unreviewedCountsBySpecies = {};
+  totalUnreviewedCount = 0;
+  vids.forEach(v => {
+    if (!v.corrected_species) {
+      unreviewedCountsBySpecies[v.display_species] = (unreviewedCountsBySpecies[v.display_species] || 0) + 1;
+      totalUnreviewedCount++;
+    }
+  });
+  updateLibraryTabBadge();
+}
+
+function updateLibraryTabBadge() {
+  const tabBtn = document.querySelector('.tab-btn[data-tab="library"]');
+  let badge = tabBtn.querySelector(".tab-badge");
+  if (totalUnreviewedCount > 0) {
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "tab-badge";
+      tabBtn.appendChild(badge);
+    }
+    badge.textContent = totalUnreviewedCount;
+  } else if (badge) {
+    badge.remove();
+  }
 }
 
 function populateFilterDropdown(selectId) {
@@ -232,8 +275,20 @@ function renderLibraryGroupCards() {
   });
 
   sorted.forEach(s => {
+    const unreviewedCount = unreviewedCountsBySpecies[s.label] || 0;
+
     const card = document.createElement("div");
-    card.className = "species-group-card" + (s.label === "blank" ? " blank" : "");
+    card.className = "species-group-card"
+      + (s.label === "blank" ? " blank" : "")
+      + (unreviewedCount > 0 ? " has-unreviewed" : "");
+
+    if (unreviewedCount > 0) {
+      const bubble = document.createElement("span");
+      bubble.className = "unreviewed-bubble";
+      bubble.textContent = unreviewedCount;
+      bubble.title = `${unreviewedCount} unreviewed video${unreviewedCount === 1 ? "" : "s"}`;
+      card.appendChild(bubble);
+    }
 
     const label = document.createElement("div");
     label.className = "species-group-label";
@@ -268,6 +323,12 @@ async function loadLibrary() {
   const url = "/api/videos" + (species ? `?species=${encodeURIComponent(species)}` : "");
   const res = await fetch(url);
   const vids = await res.json();
+  vids.sort((a, b) => {
+    const aUnreviewed = !a.corrected_species;
+    const bUnreviewed = !b.corrected_species;
+    if (aUnreviewed === bUnreviewed) return 0; // stable sort preserves existing order within each group
+    return aUnreviewed ? -1 : 1; // unreviewed (still on the AI's guess) surfaces first
+  });
   renderGrid(vids, "lib-grid", "lib-empty");
 }
 
@@ -304,12 +365,13 @@ function renderGrid(videos, gridId, emptyId) {
     const badge = card.querySelector(".species-badge");
     badge.textContent = v.display_species;
     if (v.display_species === "blank") badge.classList.add("blank");
-    if (!v.corrected_species) badge.classList.add("ai-generated");
 
     // "Verified by" is hardcoded for now (single-user assumption) — swap
     // for the actual editor's name once accounts/auth exist.
     if (v.corrected_species) {
       card.querySelector(".verified-info").classList.remove("hidden");
+    } else {
+      card.querySelector(".unreviewed-corner-bubble").classList.remove("hidden");
     }
 
     const favBtn = card.querySelector(".favorite-btn");
@@ -484,6 +546,7 @@ function renderModalList(query) {
 if (document.getElementById("tab-upload").classList.contains("active")) {
   pollQueue();
 }
+refreshSpeciesData(); // populates the Library tab's unreviewed-count badge immediately, not just after visiting the tab
 
 // ---- Spreadsheet tab ----
 const SPREADSHEET_FIELDS = ["date", "time", "location", "species", "count", "notes", "filename", "diel_period"];
