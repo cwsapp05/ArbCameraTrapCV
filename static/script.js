@@ -306,6 +306,12 @@ function renderGrid(videos, gridId, emptyId) {
     if (v.display_species === "blank") badge.classList.add("blank");
     if (!v.corrected_species) badge.classList.add("ai-generated");
 
+    // "Verified by" is hardcoded for now (single-user assumption) — swap
+    // for the actual editor's name once accounts/auth exist.
+    if (v.corrected_species) {
+      card.querySelector(".verified-info").classList.remove("hidden");
+    }
+
     const favBtn = card.querySelector(".favorite-btn");
     favBtn.textContent = v.favorited ? "★" : "☆";
     if (v.favorited) favBtn.classList.add("active");
@@ -487,11 +493,151 @@ function stripExtension(name) {
   return idx > 0 ? name.slice(0, idx) : name;
 }
 
+let spreadsheetVideos = [];        // raw data from the last /api/videos fetch
+let spreadsheetSearch = "";
+let spreadsheetSorts = [];         // stacked sort levels: [{field, dir}, ...] — applied in order, each a tie-break for the previous
+
+const SORT_FIELD_LABELS = {
+  date: "Date",
+  time: "Time",
+  location: "Location",
+  species: "Species",
+  count: "Count",
+  notes: "Notes",
+  filename: "File Name",
+  diel_period: "Diel Period",
+};
+
+function spreadsheetRowValues(v) {
+  return {
+    date: v.date || "",
+    time: v.time || "",
+    location: v.location || "",
+    species: v.display_species || "",
+    count: v.count ?? 1,
+    notes: v.notes || "",
+    filename: stripExtension(v.display_filename || v.filename),
+    diel_period: v.diel_period || "",
+  };
+}
+
 async function loadSpreadsheet() {
   const res = await fetch("/api/videos");
-  const vids = await res.json();
-  renderSpreadsheet(vids);
+  spreadsheetVideos = await res.json();
+  applySpreadsheetView();
 }
+
+function applySpreadsheetView() {
+  let rows = spreadsheetVideos;
+
+  const query = spreadsheetSearch.trim().toLowerCase();
+  if (query) {
+    rows = rows.filter(v => {
+      const values = spreadsheetRowValues(v);
+      return SPREADSHEET_FIELDS.some(f => String(values[f]).toLowerCase().includes(query));
+    });
+  }
+
+  if (spreadsheetSorts.length > 0) {
+    rows = [...rows].sort((a, b) => {
+      const av_all = spreadsheetRowValues(a);
+      const bv_all = spreadsheetRowValues(b);
+      for (const level of spreadsheetSorts) {
+        const av = av_all[level.field];
+        const bv = bv_all[level.field];
+        const aEmpty = av === "" || av === null || av === undefined;
+        const bEmpty = bv === "" || bv === null || bv === undefined;
+
+        let cmp;
+        if (aEmpty && bEmpty) cmp = 0;
+        else if (aEmpty) cmp = 1;   // missing values always sort last, either direction
+        else if (bEmpty) cmp = -1;
+        else if (level.field === "count") cmp = Number(av) - Number(bv);
+        else cmp = String(av).localeCompare(String(bv));
+
+        if (level.dir === "desc") cmp = -cmp;
+        if (cmp !== 0) return cmp; // this level broke the tie — done
+        // else: identical at this level, fall through to the next sort level
+      }
+      return 0; // tied across every sort level — leave relative order as-is (stable sort)
+    });
+  }
+
+  renderSpreadsheet(rows);
+}
+
+document.getElementById("spreadsheet-search").addEventListener("input", (e) => {
+  spreadsheetSearch = e.target.value;
+  applySpreadsheetView();
+});
+
+function renderSortRows() {
+  const container = document.getElementById("spreadsheet-sorts-list");
+  const emptyMsg = document.getElementById("spreadsheet-sorts-empty");
+  container.innerHTML = "";
+  emptyMsg.classList.toggle("hidden", spreadsheetSorts.length > 0);
+
+  spreadsheetSorts.forEach((level, index) => {
+    const row = document.createElement("div");
+    row.className = "sort-row";
+
+    const label = document.createElement("span");
+    label.className = "sort-row-label";
+    label.textContent = `Sort ${index + 1}`;
+    row.appendChild(label);
+
+    const fieldSelect = document.createElement("select");
+    fieldSelect.className = "sort-field-select";
+    Object.entries(SORT_FIELD_LABELS).forEach(([value, text]) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      if (value === level.field) opt.selected = true;
+      fieldSelect.appendChild(opt);
+    });
+    fieldSelect.addEventListener("change", () => {
+      level.field = fieldSelect.value;
+      applySpreadsheetView();
+    });
+    row.appendChild(fieldSelect);
+
+    const dirSelect = document.createElement("select");
+    dirSelect.className = "sort-dir-select";
+    [["asc", "Ascending"], ["desc", "Descending"]].forEach(([value, text]) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      if (value === level.dir) opt.selected = true;
+      dirSelect.appendChild(opt);
+    });
+    dirSelect.addEventListener("change", () => {
+      level.dir = dirSelect.value;
+      applySpreadsheetView();
+    });
+    row.appendChild(dirSelect);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove-sort-btn";
+    removeBtn.textContent = "✕";
+    removeBtn.title = "Remove this sort level";
+    removeBtn.addEventListener("click", () => {
+      spreadsheetSorts.splice(index, 1);
+      renderSortRows();
+      applySpreadsheetView();
+    });
+    row.appendChild(removeBtn);
+
+    container.appendChild(row);
+  });
+}
+
+document.getElementById("add-sort-btn").addEventListener("click", () => {
+  spreadsheetSorts.push({ field: "date", dir: "asc" });
+  renderSortRows();
+  applySpreadsheetView();
+});
+
+renderSortRows(); // draw the initial (empty) sort list on page load
 
 function renderSpreadsheet(videos) {
   closeRowContextMenu();
@@ -501,6 +647,7 @@ function renderSpreadsheet(videos) {
 
   if (videos.length === 0) {
     empty.classList.remove("hidden");
+    empty.textContent = spreadsheetSearch.trim() ? "No videos match your search." : "No videos yet.";
     return;
   }
   empty.classList.add("hidden");
@@ -522,16 +669,7 @@ function renderSpreadsheet(videos) {
     }
     tr.appendChild(arrowTd);
 
-    const values = {
-      date: v.date || "",
-      time: v.time || "",
-      location: v.location || "",
-      species: v.display_species || "",
-      count: v.count ?? 1,
-      notes: v.notes || "",
-      filename: stripExtension(v.display_filename || v.filename),
-      diel_period: v.diel_period || "",
-    };
+    const values = spreadsheetRowValues(v);
 
     SPREADSHEET_FIELDS.forEach(field => {
       const td = document.createElement("td");
@@ -613,6 +751,7 @@ document.getElementById("ctx-favorite-btn").addEventListener("click", async (e) 
     body: JSON.stringify({ favorited: newFavorited }),
   });
   row.dataset.favorited = newFavorited ? "1" : "0";
+  patchSpreadsheetVideo(videoId, { favorited: newFavorited });
 });
 
 document.getElementById("ctx-copy-btn").addEventListener("click", (e) => {
@@ -737,6 +876,7 @@ async function saveCellEdit(videoId, field, newValue, originalValue) {
       alert(data.error);
       return originalValue;
     }
+    patchSpreadsheetVideo(videoId, data);
     await refreshSpeciesData(); // counts changed — keep filters in sync elsewhere
     return data.display_species;
   }
@@ -752,6 +892,7 @@ async function saveCellEdit(videoId, field, newValue, originalValue) {
       alert(data.error);
       return originalValue;
     }
+    patchSpreadsheetVideo(videoId, data);
     return stripExtension(data.display_filename);
   }
 
@@ -767,7 +908,20 @@ async function saveCellEdit(videoId, field, newValue, originalValue) {
     alert(data.error);
     return originalValue;
   }
+  patchSpreadsheetVideo(videoId, data);
   return field === "count" ? String(data.count) : (data[field] || "");
+}
+
+// Every save endpoint (/correct, /update) returns the full updated record —
+// merge it into our cached copy so subsequent re-renders (sorting,
+// searching, a delete elsewhere in the row) reflect the edit instead of
+// reverting to whatever was last fetched from the server. Without this, an
+// edit only ever lived in the DOM cell itself, and any action that called
+// renderSpreadsheet() again (like changing the sort) would rebuild the
+// table from the stale in-memory array and silently discard it.
+function patchSpreadsheetVideo(videoId, data) {
+  const video = spreadsheetVideos.find(v => v.id === videoId);
+  if (video) Object.assign(video, data);
 }
 
 // ---- Video popup modal (Spreadsheet "Show video") ----

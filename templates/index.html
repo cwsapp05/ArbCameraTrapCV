@@ -88,6 +88,18 @@
   <!-- SPREADSHEET TAB -->
   <section id="tab-spreadsheet" class="tab-panel">
     <div class="card">
+      <label>Search</label>
+      <input type="text" id="spreadsheet-search" placeholder="Search all fields…">
+    </div>
+
+    <div class="card">
+      <label>Sort</label>
+      <div id="spreadsheet-sorts-list"></div>
+      <div id="spreadsheet-sorts-empty" class="muted hidden">No sorting applied — showing default order.</div>
+      <button id="add-sort-btn" type="button">+ Add sort</button>
+    </div>
+
+    <div class="card">
       <table id="spreadsheet-table" class="spreadsheet">
         <thead>
           <tr>
@@ -117,7 +129,13 @@
     <div class="video-card-body">
       <div class="video-filename"></div>
       <div class="video-tag-row">
-        <span class="species-badge"></span>
+        <div class="tag-left">
+          <span class="species-badge"></span>
+          <span class="verified-info hidden">
+            <span class="verified-info-icon">i</span>
+            <span class="verified-info-tooltip">Verified by: Connor Sapp</span>
+          </span>
+        </div>
         <div class="card-actions">
           <button class="favorite-btn" title="Favorite">☆</button>
           <button class="delete-btn" title="Delete from library">🗑️</button>

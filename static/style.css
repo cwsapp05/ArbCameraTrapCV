@@ -9,7 +9,7 @@ body {
 }
 
 .app {
-  max-width: 1000px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -226,6 +226,12 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   margin-bottom: 0.5rem;
 }
 
+.tag-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .species-badge {
   font-size: 0.75rem;
   padding: 0.2rem 0.55rem;
@@ -236,6 +242,63 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 .species-badge.blank { background: #f1f3f5; color: #8a929c; }
 .species-badge.ai-generated::after { content: " ✨"; }
+
+.verified-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+
+.verified-info-icon {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.verified-info-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2328;
+  color: white;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s;
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* small downward-pointing arrow from the tooltip to the icon */
+.verified-info-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #1f2328;
+}
+
+.verified-info:hover .verified-info-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
 
 .favorite-btn {
   background: none;
@@ -340,19 +403,74 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   color: #57606a;
   font-weight: 600;
   border-bottom: 1px solid #e2e5ea;
+  white-space: nowrap;
 }
+
+/* ---- Spreadsheet stacked sort ---- */
+#spreadsheet-sorts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.7rem;
+}
+
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sort-row-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #8a929c;
+  width: 4rem;
+  flex-shrink: 0;
+}
+
+.sort-field-select {
+  flex: 0 0 150px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.sort-dir-select {
+  flex: 0 0 130px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.remove-sort-btn {
+  background: none;
+  color: #8a929c;
+  border: none;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.4rem;
+  flex-shrink: 0;
+}
+.remove-sort-btn:hover { background: none; color: #dc2626; }
+
+#add-sort-btn {
+  background: none;
+  color: #2563eb;
+  border: 1px dashed #93c5fd;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+  width: 100%;
+}
+#add-sort-btn:hover { background: #eff6ff; }
 
 .spreadsheet th.arrow-col { width: 1.75rem; }
 .spreadsheet th.menu-col { width: 2rem; }
 /* Column order: Date, Time, Location, Species, Count, Notes, File Name, Diel Period */
-.spreadsheet th:nth-child(2) { width: 10%; }
-.spreadsheet th:nth-child(3) { width: 9%; }
-.spreadsheet th:nth-child(4) { width: 12%; }
-.spreadsheet th:nth-child(5) { width: 12%; }
-.spreadsheet th:nth-child(6) { width: 6%; }
-.spreadsheet th:nth-child(7) { width: 17%; }
-.spreadsheet th:nth-child(8) { width: 15%; }
-.spreadsheet th:nth-child(9) { width: 9%; }
+.spreadsheet th:nth-child(2) { width: 8%; }   /* Date */
+.spreadsheet th:nth-child(3) { width: 8%; }   /* Time */
+.spreadsheet th:nth-child(4) { width: 10%; }  /* Location */
+.spreadsheet th:nth-child(5) { width: 15%; }  /* Species */
+.spreadsheet th:nth-child(6) { width: 9%; }   /* Count */
+.spreadsheet th:nth-child(7) { width: 21%; }  /* Notes */
+.spreadsheet th:nth-child(8) { width: 13%; }  /* File Name */
+.spreadsheet th:nth-child(9) { width: 12%; }  /* Diel Period */
 
 .arrow-cell {
   text-align: center;
