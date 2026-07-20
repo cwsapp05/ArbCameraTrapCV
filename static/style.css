@@ -547,6 +547,12 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   white-space: nowrap;
 }
 
+.temp-toggle-header {
+  cursor: pointer;
+  user-select: none;
+}
+.temp-toggle-header:hover { color: #2563eb; }
+
 /* ---- Spreadsheet stacked sort ---- */
 #spreadsheet-sorts-list {
   display: flex;

@@ -608,6 +608,50 @@ refreshSpeciesData(); // populates the Library tab's unreviewed-count badge imme
 // ---- Spreadsheet tab ----
 const SPREADSHEET_FIELDS = ["date", "time", "location", "species", "count", "notes", "filename", "diel_period", "temperature"];
 
+// Persisted across refreshes and tab switches via localStorage — this is a
+// real browser app (not a sandboxed artifact), so localStorage is fine here.
+let temperatureDisplayUnit = localStorage.getItem("temperatureDisplayUnit") || "F";
+document.getElementById("temp-unit-label").textContent = temperatureDisplayUnit;
+
+document.getElementById("temperature-header").addEventListener("click", () => {
+  temperatureDisplayUnit = temperatureDisplayUnit === "F" ? "C" : "F";
+  localStorage.setItem("temperatureDisplayUnit", temperatureDisplayUnit);
+  document.getElementById("temp-unit-label").textContent = temperatureDisplayUnit;
+  applySpreadsheetView(); // re-render so every row's temperature recalculates in the new unit
+});
+
+/**
+ * Parses a raw OCR temperature reading like "72F", "68°F", or "20C" into a
+ * {value, unit} pair. If no unit letter is present (a partial/garbled OCR
+ * read can drop it), defaults to Fahrenheit — most US trail cams default to
+ * that display setting, though this is an assumption, not a certainty, for
+ * any given camera's actual configuration.
+ */
+function parseTemperatureReading(raw) {
+  if (!raw) return null;
+  const match = String(raw).match(/(-?\d+(?:\.\d+)?)\s*°?\s*([CF])?/i);
+  if (!match) return null;
+  const value = parseFloat(match[1]);
+  if (isNaN(value)) return null;
+  const unit = (match[2] || "F").toUpperCase();
+  return { value, unit };
+}
+
+function convertTemperature(value, fromUnit, toUnit) {
+  if (fromUnit === toUnit) return value;
+  if (fromUnit === "F" && toUnit === "C") return (value - 32) * 5 / 9;
+  if (fromUnit === "C" && toUnit === "F") return (value * 9 / 5) + 32;
+  return value;
+}
+
+/** Converts a raw stored reading to whatever unit is currently toggled on, for display. */
+function formatTemperatureForDisplay(raw, displayUnit) {
+  const parsed = parseTemperatureReading(raw);
+  if (!parsed) return raw || ""; // blank or unparseable — show as-is rather than guessing
+  const converted = convertTemperature(parsed.value, parsed.unit, displayUnit);
+  return `${Math.round(converted)}°${displayUnit}`;
+}
+
 function stripExtension(name) {
   const idx = name.lastIndexOf(".");
   return idx > 0 ? name.slice(0, idx) : name;
@@ -626,6 +670,7 @@ const SORT_FIELD_LABELS = {
   notes: "Notes",
   filename: "File Name",
   diel_period: "Diel Period",
+  temperature: "Temperature",
   verified: "Verified",
 };
 
@@ -639,7 +684,7 @@ function spreadsheetRowValues(v) {
     notes: v.notes || "",
     filename: stripExtension(v.display_filename || v.filename),
     diel_period: v.diel_period || "",
-    temperature: v.temperature || "",
+    temperature: formatTemperatureForDisplay(v.temperature, temperatureDisplayUnit),
     verified: v.corrected_species ? 1 : 0, // sort-only field, not a visible column — 0 (unverified) sorts before 1 (verified) ascending
   };
 }
@@ -671,12 +716,34 @@ function applySpreadsheetView() {
         const aEmpty = av === "" || av === null || av === undefined;
         const bEmpty = bv === "" || bv === null || bv === undefined;
 
+        // Missing values always sort last, regardless of direction — decided
+        // and returned/continued immediately, BEFORE the desc-flip below,
+        // which would otherwise incorrectly send them to the front on a
+        // descending sort (a pre-existing bug this restructure also fixes).
+        if (aEmpty && bEmpty) continue; // tied at this level — let the next sort level decide
+        if (aEmpty) return 1;
+        if (bEmpty) return -1;
+
         let cmp;
-        if (aEmpty && bEmpty) cmp = 0;
-        else if (aEmpty) cmp = 1;   // missing values always sort last, either direction
-        else if (bEmpty) cmp = -1;
-        else if (level.field === "count" || level.field === "verified") cmp = Number(av) - Number(bv);
-        else cmp = String(av).localeCompare(String(bv));
+        if (level.field === "count" || level.field === "verified") {
+          cmp = Number(av) - Number(bv);
+        } else if (level.field === "temperature") {
+          // Temperature is free-text OCR output like "72F" or "68°F", not a
+          // clean number — sorting it as a plain string would put "100F"
+          // before "72F" (wrong). Parse out the leading number instead; if
+          // either side can't be parsed (garbled OCR), treat it the same as
+          // a missing value — always last, regardless of direction.
+          const aNum = parseFloat(av);
+          const bNum = parseFloat(bv);
+          const aNumEmpty = isNaN(aNum);
+          const bNumEmpty = isNaN(bNum);
+          if (aNumEmpty && bNumEmpty) continue;
+          if (aNumEmpty) return 1;
+          if (bNumEmpty) return -1;
+          cmp = aNum - bNum;
+        } else {
+          cmp = String(av).localeCompare(String(bv));
+        }
 
         if (level.dir === "desc") cmp = -cmp;
         if (cmp !== 0) return cmp; // this level broke the tie — done
@@ -1067,8 +1134,17 @@ async function saveCellEdit(videoId, field, newValue, originalValue) {
     return stripExtension(data.display_filename);
   }
 
-  // date, time, location, count, diel_period — all plain fields on /update
-  const payload = { [field]: newValue };
+  // date, time, location, count, diel_period, temperature — all plain fields on /update
+  let valueToSend = newValue;
+  if (field === "temperature" && newValue !== "") {
+    // The cell displays (and you're typing) in whatever unit is currently
+    // toggled — tag the typed number with that unit before storing it, so
+    // the raw stored value stays self-describing regardless of which unit
+    // was active when it was entered.
+    const num = parseFloat(newValue);
+    if (!isNaN(num)) valueToSend = `${num}°${temperatureDisplayUnit}`;
+  }
+  const payload = { [field]: valueToSend };
   const res = await fetch(`/api/videos/${videoId}/update`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1080,7 +1156,9 @@ async function saveCellEdit(videoId, field, newValue, originalValue) {
     return originalValue;
   }
   patchSpreadsheetVideo(videoId, data);
-  return field === "count" ? String(data.count) : (data[field] || "");
+  if (field === "count") return String(data.count);
+  if (field === "temperature") return formatTemperatureForDisplay(data.temperature, temperatureDisplayUnit);
+  return data[field] || "";
 }
 
 // Every save endpoint (/correct, /update) returns the full updated record —
