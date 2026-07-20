@@ -20,6 +20,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 
     if (btn.dataset.tab === "upload") {
       pollQueue();
+      loadUploadHistory();
     } else {
       clearTimeout(queuePollTimer);
     }
@@ -79,6 +80,7 @@ runBtn.addEventListener("click", async () => {
     : "Submitted — starting shortly.";
 
   pollQueue(); // refresh immediately rather than waiting for the next tick
+  loadUploadHistory();
 });
 
 // ---- Queue panel + live log (Upload tab) ----
@@ -114,6 +116,7 @@ function pollQueue() {
       const currentQueueSize = data.running.length + data.queued.length;
       if (currentQueueSize < lastQueueSize) {
         refreshSpeciesData();
+        loadUploadHistory();
       }
       lastQueueSize = currentQueueSize;
 
@@ -121,6 +124,59 @@ function pollQueue() {
         queuePollTimer = setTimeout(pollQueue, 2000);
       }
     });
+}
+
+// ---- Upload History (Upload tab) ----
+document.getElementById("upload-history-toggle").addEventListener("click", () => {
+  const content = document.getElementById("upload-history-content");
+  const arrow = document.querySelector("#upload-history-toggle .collapsible-arrow");
+  content.classList.toggle("hidden");
+  arrow.classList.toggle("expanded");
+});
+
+async function loadUploadHistory() {
+  const res = await fetch("/api/jobs");
+  const jobs = await res.json();
+  renderUploadHistory(jobs);
+}
+
+function renderUploadHistory(jobs) {
+  const list = document.getElementById("upload-history-list");
+  const empty = document.getElementById("upload-history-empty");
+  list.innerHTML = "";
+
+  if (jobs.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  jobs.forEach(job => {
+    const li = document.createElement("li");
+    li.className = "history-item";
+
+    const folder = document.createElement("span");
+    folder.className = "history-folder";
+    folder.textContent = job.folder;
+    folder.title = job.folder;
+    li.appendChild(folder);
+
+    const meta = document.createElement("span");
+    meta.className = "history-meta";
+
+    const time = document.createElement("span");
+    time.className = "history-time";
+    time.textContent = job.started_at;
+    meta.appendChild(time);
+
+    const badge = document.createElement("span");
+    badge.className = "history-status-badge status-" + job.status;
+    badge.textContent = job.status;
+    meta.appendChild(badge);
+
+    li.appendChild(meta);
+    list.appendChild(li);
+  });
 }
 
 function updateRunningLog(runningJobs) {
@@ -545,6 +601,7 @@ function renderModalList(query) {
 // stay empty until the user manually switches tabs and back.
 if (document.getElementById("tab-upload").classList.contains("active")) {
   pollQueue();
+  loadUploadHistory();
 }
 refreshSpeciesData(); // populates the Library tab's unreviewed-count badge immediately, not just after visiting the tab
 

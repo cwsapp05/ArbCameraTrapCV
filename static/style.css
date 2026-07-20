@@ -162,6 +162,89 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   gap: 0.4rem;
 }
 
+/* ---- Upload History ---- */
+.collapsible-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: none;
+  color: #1f2328;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+}
+.collapsible-toggle:hover { background: none; color: #2563eb; }
+
+.collapsible-arrow {
+  display: inline-block;
+  font-size: 0.8rem;
+  color: #8a929c;
+  transition: transform 0.15s;
+}
+.collapsible-arrow.expanded { transform: rotate(90deg); }
+
+#upload-history-content { margin-top: 0.7rem; }
+
+.upload-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  background: #f6f7f9;
+  font-size: 0.85rem;
+}
+
+.history-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0; /* lets text-overflow work inside a flex child */
+}
+
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
+.history-time {
+  font-size: 0.75rem;
+  color: #8a929c;
+  white-space: nowrap;
+}
+
+.history-status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.history-status-badge.status-done { background: #dcfce7; color: #15803d; }
+.history-status-badge.status-error { background: #fee2e2; color: #b91c1c; }
+.history-status-badge.status-cancelled { background: #f1f3f5; color: #57606a; }
+.history-status-badge.status-cancelling { background: #fef3c7; color: #92400e; }
+.history-status-badge.status-running { background: #dbeafe; color: #1d4ed8; }
+.history-status-badge.status-queued { background: #f1f3f5; color: #57606a; }
+
 .queue-item {
   display: flex;
   align-items: center;

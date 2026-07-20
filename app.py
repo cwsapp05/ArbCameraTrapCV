@@ -551,6 +551,14 @@ def cancel_job(job_id):
     return jsonify({"error": f"Job is already '{status}' — nothing to cancel"}), 400
 
 
+@app.route("/api/jobs")
+def list_jobs():
+    """All submitted jobs, most recent first — powers the Upload tab's history list."""
+    with jobs_lock:
+        job_list = sorted(jobs.values(), key=lambda j: j["seq"], reverse=True)
+    return jsonify(job_list)
+
+
 @app.route("/api/species")
 def list_species():
     """Full taxonomy plus how many current videos display as each species."""
