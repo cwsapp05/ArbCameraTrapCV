@@ -569,6 +569,7 @@ const SORT_FIELD_LABELS = {
   notes: "Notes",
   filename: "File Name",
   diel_period: "Diel Period",
+  verified: "Verified",
 };
 
 function spreadsheetRowValues(v) {
@@ -581,6 +582,7 @@ function spreadsheetRowValues(v) {
     notes: v.notes || "",
     filename: stripExtension(v.display_filename || v.filename),
     diel_period: v.diel_period || "",
+    verified: v.corrected_species ? 1 : 0, // sort-only field, not a visible column — 0 (unverified) sorts before 1 (verified) ascending
   };
 }
 
@@ -615,7 +617,7 @@ function applySpreadsheetView() {
         if (aEmpty && bEmpty) cmp = 0;
         else if (aEmpty) cmp = 1;   // missing values always sort last, either direction
         else if (bEmpty) cmp = -1;
-        else if (level.field === "count") cmp = Number(av) - Number(bv);
+        else if (level.field === "count" || level.field === "verified") cmp = Number(av) - Number(bv);
         else cmp = String(av).localeCompare(String(bv));
 
         if (level.dir === "desc") cmp = -cmp;
@@ -739,6 +741,12 @@ function renderSpreadsheet(videos) {
       td.className = "editable";
       td.dataset.field = field;
       td.textContent = values[field];
+
+      if (field === "species") {
+        td.classList.add(v.corrected_species ? "species-verified" : "species-unverified");
+        td.title = v.corrected_species ? "Verified by: Connor Sapp" : "Unverified";
+      }
+
       td.addEventListener("click", () => startCellEdit(td, v.id));
       tr.appendChild(td);
     });
@@ -897,6 +905,11 @@ function startCellEdit(td, videoId) {
     const savedText = await saveCellEdit(videoId, field, newValue, originalValue);
     td.classList.remove("editing");
     td.textContent = savedText;
+    if (field === "species") {
+      td.classList.remove("species-unverified");
+      td.classList.add("species-verified");
+      td.title = "Verified by: Connor Sapp";
+    }
     autoCloseBarCropForRow(tr);
   };
 

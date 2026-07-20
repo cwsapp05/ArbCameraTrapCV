@@ -580,6 +580,9 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   padding: 0.25rem 0.4rem;
 }
 
+.spreadsheet td.species-unverified { color: #2563eb; }
+.spreadsheet td.species-verified { color: #1f2328; }
+
 .spreadsheet td input {
   box-sizing: border-box; /* so the input's own border/padding stay inside
                               the fixed column width instead of adding to it */
