@@ -141,9 +141,9 @@ def run_bar_ocr_safe(folder, filename):
     """
     Wraps bar_ocr's pipeline for one video file. Never raises — a single
     unreadable clip or OCR hiccup shouldn't take down the whole job's sync;
-    it just gets blank date/time/location/diel_period, correctable by hand.
+    it just gets blank date/time/location/diel_period/temperature, correctable by hand.
     """
-    defaults = {"date": None, "time": None, "location": None, "diel_period": None}
+    defaults = {"date": None, "time": None, "location": None, "diel_period": None, "temperature": None}
     try:
         video_path = Path(folder) / filename
         if not video_path.is_file():
@@ -153,12 +153,14 @@ def run_bar_ocr_safe(folder, filename):
         raw_date = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["date"], whitelist="0123456789/-")
         raw_time = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["time"], whitelist="0123456789:APM ")
         location = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["location"])
+        raw_temperature = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["temperature"], whitelist="0123456789°CF ")
 
         parsed_date = bar_ocr.parse_date(raw_date)
         parsed_time = bar_ocr.parse_time(raw_time)
 
         result = dict(defaults)
         result["location"] = location or None
+        result["temperature"] = raw_temperature or None
         if parsed_date:
             result["date"] = parsed_date.isoformat()
         if parsed_time:
@@ -639,14 +641,14 @@ def correct_species(video_id):
 @app.route("/api/videos/<video_id>/update", methods=["POST"])
 def update_video_metadata(video_id):
     """
-    Edits Date, Time, Location, Diel Period, Count, Notes, and/or File Name.
-    Any subset of these can be sent — only the provided keys are changed.
-    Editing date/time/location/diel_period marks the video as manually
-    edited, which freezes ALL FOUR against being overwritten by OCR if this
-    job is ever re-synced (see sync_videos_from_job).
+    Edits Date, Time, Location, Diel Period, Temperature, Count, Notes, and/or
+    File Name. Any subset of these can be sent — only the provided keys are
+    changed. Editing date/time/location/diel_period/temperature marks the
+    video as manually edited, which freezes ALL FIVE against being
+    overwritten by OCR if this job is ever re-synced (see sync_videos_from_job).
     """
     data = request.get_json(force=True)
-    allowed_fields = {"date", "time", "location", "diel_period", "count", "notes", "display_filename"}
+    allowed_fields = {"date", "time", "location", "diel_period", "temperature", "count", "notes", "display_filename"}
     updates = {k: v for k, v in data.items() if k in allowed_fields}
 
     if "count" in updates:
@@ -663,7 +665,7 @@ def update_video_metadata(video_id):
             return jsonify({"error": "Unknown video"}), 404
         record = videos[video_id]
 
-        if any(f in updates for f in ("date", "time", "location", "diel_period")):
+        if any(f in updates for f in ("date", "time", "location", "diel_period", "temperature")):
             record["metadata_edited"] = True
 
         record.update(updates)

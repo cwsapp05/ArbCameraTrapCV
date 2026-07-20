@@ -604,14 +604,15 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .spreadsheet th.arrow-col { width: 1.75rem; }
 .spreadsheet th.menu-col { width: 2rem; }
 /* Column order: Date, Time, Location, Species, Count, Notes, File Name, Diel Period */
-.spreadsheet th:nth-child(2) { width: 8%; }   /* Date */
-.spreadsheet th:nth-child(3) { width: 8%; }   /* Time */
-.spreadsheet th:nth-child(4) { width: 10%; }  /* Location */
-.spreadsheet th:nth-child(5) { width: 15%; }  /* Species */
-.spreadsheet th:nth-child(6) { width: 9%; }   /* Count */
-.spreadsheet th:nth-child(7) { width: 21%; }  /* Notes */
-.spreadsheet th:nth-child(8) { width: 13%; }  /* File Name */
-.spreadsheet th:nth-child(9) { width: 12%; }  /* Diel Period */
+.spreadsheet th:nth-child(2) { width: 7%; }   /* Date */
+.spreadsheet th:nth-child(3) { width: 7%; }   /* Time */
+.spreadsheet th:nth-child(4) { width: 9%; }   /* Location */
+.spreadsheet th:nth-child(5) { width: 13%; }  /* Species */
+.spreadsheet th:nth-child(6) { width: 8%; }   /* Count */
+.spreadsheet th:nth-child(7) { width: 18%; }  /* Notes */
+.spreadsheet th:nth-child(8) { width: 12%; }  /* File Name */
+.spreadsheet th:nth-child(9) { width: 10%; }  /* Diel Period */
+.spreadsheet th:nth-child(10) { width: 9%; }  /* Temperature */
 
 .arrow-cell {
   text-align: center;
