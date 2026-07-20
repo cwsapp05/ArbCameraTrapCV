@@ -8,7 +8,10 @@
 <body>
 
 <div class="app">
-  <h1><span id="title-emoji">🦝</span> Trail Cam Species Library</h1>
+  <div class="header-row">
+    <h1><span id="title-emoji">🦝</span> UCF Arboretum Trail Cam Species Library</h1>
+    <button id="library-settings-btn" class="gear-btn" title="Library settings">⚙️</button>
+  </div>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="upload">Upload</button>
@@ -184,6 +187,24 @@
   <button id="ctx-copy-btn">Copy row</button>
   <button id="ctx-copy-all-btn">Copy entire table</button>
   <button id="ctx-delete-btn" class="menu-delete-btn">Delete</button>
+</div>
+
+<!-- Library Settings modal, opened via the gear icon on the group view -->
+<div id="library-settings-modal" class="modal-overlay hidden">
+  <div class="modal-box settings-modal-box">
+    <div class="modal-header">
+      <h3>Library Settings</h3>
+      <button id="library-settings-close-btn" class="modal-close">✕</button>
+    </div>
+
+    <label>Hidden groups</label>
+    <div class="hidden-groups-input-wrap">
+      <input type="text" id="hidden-groups-input" placeholder="Type a species name…" autocomplete="off">
+      <div id="hidden-groups-autofill" class="autofill-dropdown hidden"></div>
+    </div>
+
+    <div id="hidden-groups-list" class="hidden-groups-chips"></div>
+  </div>
 </div>
 
 <!-- Video popup, shown from the Spreadsheet tab's "Show video" menu option -->

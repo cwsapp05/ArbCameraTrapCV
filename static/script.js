@@ -5,6 +5,7 @@ let speciesWithClips = [];  // allSpecies filtered to count > 0 — used for dro
 let modalTargetVideoId = null;
 let lastRunningJobId = null; // tracks which job the log box is currently showing
 let libraryActiveSpecies = null; // which species card was drilled into, or null = showing the group view
+let hiddenGroups = JSON.parse(localStorage.getItem("hiddenGroups") || "[]"); // species labels hidden from the group view, persisted like the temperature unit setting
 
 // ---- Random title emoji, picked fresh each page load ----
 const TITLE_EMOJIS = ["🦝", "🦌", "🐇", "🐻", "🐰", "🐭", "🐸", "🦆", "🪿", "🐦‍⬛", "🦉", "🦇", "🐞", "🐍", "🦎", "🐊", "🐆", "🦃", "🐁", "🐀", "🐿️"];
@@ -256,7 +257,7 @@ async function refreshSpeciesData() {
   unreviewedCountsBySpecies = {};
   totalUnreviewedCount = 0;
   vids.forEach(v => {
-    if (!v.corrected_species) {
+    if (!v.corrected_species && !hiddenGroups.includes(v.display_species)) {
       unreviewedCountsBySpecies[v.display_species] = (unreviewedCountsBySpecies[v.display_species] || 0) + 1;
       totalUnreviewedCount++;
     }
@@ -317,13 +318,18 @@ function renderLibraryGroupCards() {
   const empty = document.getElementById("lib-groups-empty");
   container.innerHTML = "";
 
-  if (speciesWithClips.length === 0) {
+  const visibleSpecies = speciesWithClips.filter(s => !hiddenGroups.includes(s.label));
+
+  if (visibleSpecies.length === 0) {
     empty.classList.remove("hidden");
+    empty.textContent = speciesWithClips.length > 0
+      ? "All groups are hidden — check Library Settings (⚙️) to unhide some."
+      : "No videos processed yet.";
     return;
   }
   empty.classList.add("hidden");
 
-  const sorted = [...speciesWithClips].sort((a, b) => {
+  const sorted = [...visibleSpecies].sort((a, b) => {
     if (a.label === "blank") return 1;   // blank always last, regardless of count
     if (b.label === "blank") return -1;
     if (b.count !== a.count) return b.count - a.count; // most videos first
@@ -358,6 +364,126 @@ function renderLibraryGroupCards() {
 
     card.addEventListener("click", () => openLibraryGroup(s.label));
     container.appendChild(card);
+  });
+}
+
+// ---- Library Settings modal (gear icon) ----
+document.getElementById("library-settings-btn").addEventListener("click", () => {
+  document.getElementById("library-settings-modal").classList.remove("hidden");
+  document.getElementById("hidden-groups-input").value = "";
+  document.getElementById("hidden-groups-autofill").classList.add("hidden");
+  renderHiddenGroupsList();
+});
+
+function closeLibrarySettingsModal() {
+  document.getElementById("library-settings-modal").classList.add("hidden");
+}
+document.getElementById("library-settings-close-btn").addEventListener("click", closeLibrarySettingsModal);
+document.getElementById("library-settings-modal").addEventListener("click", (e) => {
+  if (e.target.id === "library-settings-modal") closeLibrarySettingsModal(); // clicking the dim backdrop
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !document.getElementById("library-settings-modal").classList.contains("hidden")) {
+    closeLibrarySettingsModal();
+  }
+});
+
+const hiddenGroupsInput = document.getElementById("hidden-groups-input");
+
+hiddenGroupsInput.addEventListener("input", () => {
+  renderHiddenGroupsAutofill(hiddenGroupsInput.value);
+});
+
+hiddenGroupsInput.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const typed = hiddenGroupsInput.value.trim();
+  if (!typed) return;
+  // Only adds on an actual match — this is a validated "hide this known
+  // group" action, not a free-text tag creator.
+  const match = speciesWithClips.find(s => s.label.toLowerCase() === typed.toLowerCase());
+  if (match) addHiddenGroup(match.label);
+});
+
+function renderHiddenGroupsAutofill(query) {
+  const dropdown = document.getElementById("hidden-groups-autofill");
+  const q = query.trim().toLowerCase();
+  dropdown.innerHTML = "";
+
+  if (!q) {
+    dropdown.classList.add("hidden");
+    return;
+  }
+
+  const matches = speciesWithClips
+    .filter(s => s.label.toLowerCase().includes(q) && !hiddenGroups.includes(s.label))
+    .slice(0, 8);
+
+  if (matches.length === 0) {
+    dropdown.classList.add("hidden");
+    return;
+  }
+
+  matches.forEach(s => {
+    const item = document.createElement("div");
+    item.className = "autofill-item";
+    item.textContent = s.label;
+    // mousedown (not click) fires before the input's blur, so the click
+    // registers before anything closes the dropdown out from under it.
+    item.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      addHiddenGroup(s.label);
+    });
+    dropdown.appendChild(item);
+  });
+  dropdown.classList.remove("hidden");
+}
+
+function addHiddenGroup(label) {
+  if (!hiddenGroups.includes(label)) {
+    hiddenGroups.push(label);
+    localStorage.setItem("hiddenGroups", JSON.stringify(hiddenGroups));
+  }
+  hiddenGroupsInput.value = "";
+  document.getElementById("hidden-groups-autofill").classList.add("hidden");
+  renderHiddenGroupsList();
+  // refreshSpeciesData recomputes the unreviewed-count badge excluding the
+  // newly-hidden group, then renders the group cards with it applied.
+  refreshSpeciesData().then(renderLibraryGroupCards);
+}
+
+function removeHiddenGroup(label) {
+  hiddenGroups = hiddenGroups.filter(g => g !== label);
+  localStorage.setItem("hiddenGroups", JSON.stringify(hiddenGroups));
+  renderHiddenGroupsList();
+  refreshSpeciesData().then(renderLibraryGroupCards);
+}
+
+function renderHiddenGroupsList() {
+  const container = document.getElementById("hidden-groups-list");
+  container.innerHTML = "";
+
+  if (hiddenGroups.length === 0) {
+    const emptyMsg = document.createElement("div");
+    emptyMsg.className = "muted";
+    emptyMsg.textContent = "No hidden groups.";
+    container.appendChild(emptyMsg);
+    return;
+  }
+
+  hiddenGroups.forEach(label => {
+    const chip = document.createElement("span");
+    chip.className = "hidden-group-chip";
+    chip.textContent = label;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "hidden-group-remove";
+    removeBtn.textContent = "✕";
+    removeBtn.title = `Unhide ${label}`;
+    removeBtn.addEventListener("click", () => removeHiddenGroup(label));
+    chip.appendChild(removeBtn);
+
+    container.appendChild(chip);
   });
 }
 
@@ -696,7 +822,7 @@ async function loadSpreadsheet() {
 }
 
 function applySpreadsheetView() {
-  let rows = spreadsheetVideos;
+  let rows = spreadsheetVideos.filter(v => !hiddenGroups.includes(v.display_species));
 
   const query = spreadsheetSearch.trim().toLowerCase();
   if (query) {

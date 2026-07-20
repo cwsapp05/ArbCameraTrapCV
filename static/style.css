@@ -13,7 +13,14 @@ body {
   margin: 0 auto;
 }
 
-h1 { font-size: 1.4rem; margin-bottom: 1.2rem; }
+h1 { font-size: 1.4rem; margin: 0; }
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.2rem;
+}
 h3 { font-size: 0.95rem; margin: 0 0 0.6rem 0; }
 
 .tabs {
@@ -794,6 +801,89 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 .modal-species-item:hover { background: #f6f7f9; }
 .modal-species-item .count { color: #8a929c; font-size: 0.8rem; }
+
+/* ---- Library Settings (gear icon) ---- */
+.gear-btn {
+  background: none;
+  border: none;
+  font-size: 1.3rem;
+  padding: 0.2rem 0.4rem;
+  line-height: 1;
+  opacity: 0.6;
+}
+.gear-btn:hover { background: none; opacity: 1; }
+
+.settings-modal-box {
+  width: 90%;
+  max-width: 420px;
+}
+
+.settings-modal-box label {
+  margin-top: 0.9rem;
+}
+
+.hidden-groups-input-wrap {
+  position: relative;
+}
+
+#hidden-groups-input {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #d0d5dc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.autofill-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.autofill-item {
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+.autofill-item:hover { background: #f6f7f9; }
+
+.hidden-groups-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+}
+
+.hidden-group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #f1f3f5;
+  color: #444b53;
+  border-radius: 999px;
+  padding: 0.3rem 0.5rem 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  text-transform: capitalize;
+}
+
+.hidden-group-remove {
+  background: none;
+  border: none;
+  color: #8a929c;
+  font-size: 0.75rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+.hidden-group-remove:hover { background: none; color: #dc2626; }
 
 /* ---- Video popup modal ---- */
 .video-modal-box {
