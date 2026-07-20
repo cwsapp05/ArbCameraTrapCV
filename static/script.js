@@ -938,7 +938,7 @@ function copyRowToClipboard(tr) {
 function copyEntireTableToClipboard() {
   const tbody = document.getElementById("spreadsheet-body");
   const rows = tbody.querySelectorAll("tr");
-  
+
   if (rows.length === 0) return;
 
   // Extract data from every row using the exact same cell mapping format
@@ -989,14 +989,23 @@ function startCellEdit(td, videoId) {
 
     const newValue = input.value.trim();
     const savedText = await saveCellEdit(videoId, field, newValue, originalValue);
-    td.classList.remove("editing");
-    td.textContent = savedText;
-    if (field === "species") {
-      td.classList.remove("species-unverified");
-      td.classList.add("species-verified");
-      td.title = "Verified by: Connor Sapp";
+    autoCloseBarCropForRow(tr); // decrements this row's active-edit count
+
+    // Only do a full re-render once EVERY field in this row is done editing.
+    // If Tab was just used to jump to another field in the same row, that
+    // field's edit is still active here — rebuilding the table now would
+    // yank its <input> out from under the user mid-keystroke. Once the row's
+    // whole edit sequence ends, re-render through the current sort/search so
+    // the change takes effect immediately (re-sorts the row, and recomputes
+    // species verified/unverified styling from the real data) instead of
+    // waiting for some unrelated action like changing the sort.
+    const stillEditingThisRow = parseInt(tr.dataset.activeEdits || "0", 10) > 0;
+    if (stillEditingThisRow) {
+      td.classList.remove("editing");
+      td.textContent = savedText;
+    } else {
+      applySpreadsheetView();
     }
-    autoCloseBarCropForRow(tr);
   };
 
   input.addEventListener("keydown", (e) => {
