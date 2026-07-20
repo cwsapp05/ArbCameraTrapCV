@@ -552,6 +552,8 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   font-weight: 600;
   border-bottom: 1px solid #e2e5ea;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .temp-toggle-header {
@@ -677,8 +679,71 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   padding: 0.25rem 0.4rem;
 }
 
+.spreadsheet td.species-unverified,
+.spreadsheet td.species-verified {
+  position: relative; /* anchors the tooltip pseudo-elements below */
+  overflow: visible;   /* .spreadsheet td sets overflow:hidden for text
+                          truncation, which would otherwise clip this cell's
+                          tooltip since it renders above the cell's own box */
+}
 .spreadsheet td.species-unverified { color: #2563eb; }
 .spreadsheet td.species-verified { color: #1f2328; }
+
+.species-cell-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tooltip box, matching .verified-info-tooltip's look exactly (dark
+   rounded box, arrow beneath) — implemented via ::after/::before reading
+   data-tooltip, instead of a real nested element, so it can't interfere
+   with td.textContent. */
+.spreadsheet td.species-unverified::after,
+.spreadsheet td.species-verified::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2328;
+  color: white;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.spreadsheet td.species-unverified::before,
+.spreadsheet td.species-verified::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #1f2328;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.spreadsheet td.species-unverified:hover::after,
+.spreadsheet td.species-unverified:hover::before,
+.spreadsheet td.species-verified:hover::after,
+.spreadsheet td.species-verified:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
 
 .spreadsheet td input {
   box-sizing: border-box; /* so the input's own border/padding stay inside

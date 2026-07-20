@@ -994,8 +994,22 @@ function renderSpreadsheet(videos) {
       td.textContent = values[field];
 
       if (field === "species") {
+        // Text truncation happens on this inner span, not the td itself —
+        // the td needs overflow:visible so its tooltip (below) can escape
+        // the cell's box; wrapping the text lets it truncate independently.
+        const textSpan = document.createElement("span");
+        textSpan.className = "species-cell-text";
+        textSpan.textContent = td.textContent;
+        td.textContent = "";
+        td.appendChild(textSpan);
+
         td.classList.add(v.corrected_species ? "species-verified" : "species-unverified");
-        td.title = v.corrected_species ? "Verified by: Connor Sapp" : "Unverified";
+        // Rendered via CSS (::after, styled to match the Library view's
+        // info-icon tooltip) rather than the native title attribute — a
+        // real tooltip element here would pollute td.textContent, which
+        // copyRowToClipboard/copyEntireTableToClipboard/startCellEdit all
+        // read directly.
+        td.dataset.tooltip = v.corrected_species ? "Verified by: Connor Sapp" : "Unverified";
       }
 
       td.addEventListener("click", () => startCellEdit(td, v.id));
