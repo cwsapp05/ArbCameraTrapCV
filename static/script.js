@@ -606,7 +606,7 @@ if (document.getElementById("tab-upload").classList.contains("active")) {
 refreshSpeciesData(); // populates the Library tab's unreviewed-count badge immediately, not just after visiting the tab
 
 // ---- Spreadsheet tab ----
-const SPREADSHEET_FIELDS = ["date", "time", "location", "species", "count", "notes", "filename", "diel_period"];
+const SPREADSHEET_FIELDS = ["date", "time", "location", "species", "count", "notes", "filename", "diel_period", "temperature"];
 
 function stripExtension(name) {
   const idx = name.lastIndexOf(".");
@@ -639,6 +639,7 @@ function spreadsheetRowValues(v) {
     notes: v.notes || "",
     filename: stripExtension(v.display_filename || v.filename),
     diel_period: v.diel_period || "",
+    temperature: v.temperature || "",
     verified: v.corrected_species ? 1 : 0, // sort-only field, not a visible column — 0 (unverified) sorts before 1 (verified) ascending
   };
 }

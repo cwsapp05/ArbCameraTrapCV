@@ -46,12 +46,13 @@ from astral.sun import sun
 CROP_BOXES = {
     "date": (289, 1012, 545, 1064),       # TODO: fill in L, T, R, B
     "time": (546, 1012, 727, 1064),       # TODO: fill in
-    "location": (913, 1012, 1163, 1064),  # TODO: fill in
+    "location": (913, 1012, 1163, 1064),
+    "temperature": (750, 1012, 850, 1064),  # TODO: fill in
 }
 
 # All cameras are within the same property, so sunrise/sunset/dawn/dusk
 # won't meaningfully differ between sites (a shift of a few hundred meters to
-# a couple km changes dawn/dusk by well under a minute) — one fixed
+# a couple km changes dawn/dusk by  well under a minute) — one fixed
 # lat/long for the whole Arboretum is used for every clip, regardless of
 # which camera/location name it came from. Location Name itself is just
 # recorded as the raw text off the bar; it's a label, not a coordinate lookup.
@@ -173,6 +174,7 @@ def process_clip(video_path):
     raw_date = ocr_field(frame, CROP_BOXES["date"], whitelist="0123456789/-")
     raw_time = ocr_field(frame, CROP_BOXES["time"], whitelist="0123456789:APM ")
     location = ocr_field(frame, CROP_BOXES["location"])  # free text, no whitelist
+    raw_temperature = ocr_field(frame, CROP_BOXES["temperature"], whitelist="0123456789°CF ")
 
     parsed_date = parse_date(raw_date)
     parsed_time = parse_time(raw_time)
@@ -183,6 +185,7 @@ def process_clip(video_path):
         "raw_time_text": raw_time,
         "date": parsed_date.isoformat() if parsed_date else None,
         "location": location,
+        "temperature": raw_temperature,
         "diel_period": None,
     }
 

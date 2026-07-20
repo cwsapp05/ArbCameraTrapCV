@@ -117,6 +117,7 @@ canonical_species = load_json(SPECIES_LIST_FILE, [])
 # won't have these keys — fill in defaults so the UI doesn't break on them.
 _NEW_FIELD_DEFAULTS = {
     "date": None, "time": None, "location": None, "diel_period": None,
+    "temperature": None,
     "count": 1, "notes": "", "display_filename": None, "metadata_edited": False,
     "has_bar_crop": False,
 }
@@ -269,6 +270,7 @@ def sync_videos_from_job(job_id):
                     "date": existing.get("date"),
                     "time": existing.get("time"),
                     "location": existing.get("location"),
+                    "temperature": existing.get("temperature"),
                     "diel_period": existing.get("diel_period"),
                 }
             else:
