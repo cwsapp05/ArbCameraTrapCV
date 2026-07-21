@@ -456,6 +456,139 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   gap: 0.4rem;
 }
 .correction-row select { flex: 1; padding: 0.4rem 0.5rem; font-size: 0.8rem; }
+
+/* ---- Review tab ---- */
+#review-progress-card {
+  padding: 0.6rem 1.1rem;
+  font-size: 0.85rem;
+  color: #57606a;
+  font-weight: 600;
+}
+
+.review-layout {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 1.2rem;
+  align-items: start;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+@media (max-width: 800px) {
+  .review-layout { grid-template-columns: 1fr; }
+}
+
+.review-layout.review-swipe-exit-left { transform: translateX(-50px); opacity: 0; }
+.review-layout.review-swipe-exit-right { transform: translateX(50px); opacity: 0; }
+.review-layout.review-swipe-instant { transition: none !important; }
+
+.review-video-pane {
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.review-video-pane video {
+  width: 100%;
+  border-radius: 8px;
+  background: black;
+  display: block;
+}
+
+.review-video-pane .bar-crop-inline-img {
+  margin-top: 0.8rem;
+  width: 100%;
+}
+
+.review-nav-buttons {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.review-nav-btn {
+  flex: 1;
+  padding: 0.6rem;
+  background: #57606a;
+}
+.review-nav-btn:hover { background: #444b53; }
+.review-nav-btn:disabled { background: #d0d5dc; cursor: not-allowed; }
+
+.review-next-primary { background: #2563eb; }
+.review-next-primary:hover { background: #1d4ed8; }
+
+.review-fields-pane {
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 10px;
+  padding: 1.1rem;
+}
+
+.review-species-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  margin-bottom: 1.1rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.review-species-info { flex: 1; }
+.review-species-info label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #8a929c;
+  margin-bottom: 0.3rem;
+}
+
+.review-species-display {
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: #2563eb; /* unverified, matches spreadsheet convention */
+}
+.review-species-display.confirmed { color: #1f2328; }
+.review-species-display.confirmed::after { content: " ✓"; color: #15803d; }
+
+.confirm-btn {
+  background: #15803d;
+  white-space: nowrap;
+}
+.confirm-btn:hover { background: #116430; }
+
+.edit-species-btn {
+  background: none;
+  color: #57606a;
+  border: 1px solid #d0d5dc;
+  white-space: nowrap;
+}
+.edit-species-btn:hover { background: #f6f7f9; }
+
+.review-fields-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+}
+
+.review-fields-grid label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #444b53;
+  margin: 0;
+}
+
+.review-fields-grid input {
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #d0d5dc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.review-full-width { grid-column: 1 / -1; }
+
 .correction-row button {
   padding: 0.4rem 0.6rem;
   font-size: 0.8rem;
@@ -624,10 +757,10 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .spreadsheet th:nth-child(4) { width: 9%; }   /* Location */
 .spreadsheet th:nth-child(5) { width: 13%; }  /* Species */
 .spreadsheet th:nth-child(6) { width: 8%; }   /* Count */
-.spreadsheet th:nth-child(7) { width: 18%; }  /* Notes */
-.spreadsheet th:nth-child(8) { width: 12%; }  /* File Name */
+.spreadsheet th:nth-child(7) { width: 16%; }  /* Notes */
+.spreadsheet th:nth-child(8) { width: 11%; }  /* File Name */
 .spreadsheet th:nth-child(9) { width: 10%; }  /* Diel Period */
-.spreadsheet th:nth-child(10) { width: 9%; }  /* Temperature */
+.spreadsheet th:nth-child(10) { width: 12%; }  /* Temperature */
 
 .arrow-cell {
   text-align: center;

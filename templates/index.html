@@ -15,6 +15,7 @@
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="upload">Upload</button>
+    <button class="tab-btn" data-tab="review">Review</button>
     <button class="tab-btn" data-tab="library">Library</button>
     <button class="tab-btn" data-tab="favorites">Favorites</button>
     <button class="tab-btn" data-tab="spreadsheet">Spreadsheet</button>
@@ -66,6 +67,48 @@
       <div id="upload-history-content" class="hidden">
         <div id="upload-history-empty" class="muted hidden">No folders uploaded yet.</div>
         <ul id="upload-history-list" class="upload-history-list"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- REVIEW TAB -->
+  <section id="tab-review" class="tab-panel">
+    <div class="card" id="review-progress-card">
+      <span id="review-progress"></span>
+    </div>
+
+    <div id="review-empty" class="muted hidden">All caught up! No unreviewed videos right now.</div>
+
+    <div id="review-content" class="review-layout hidden">
+      <div class="review-video-pane">
+        <video id="review-video-player" controls preload="metadata"></video>
+        <img id="review-bar-crop-img" class="bar-crop-inline-img hidden" alt="Cropped info bar">
+        <div class="review-nav-buttons">
+          <button id="review-prev-btn" class="review-nav-btn">← Previous</button>
+          <button id="review-next-btn" class="review-nav-btn review-next-primary">Next (Enter) →</button>
+        </div>
+      </div>
+
+      <div class="review-fields-pane">
+        <div class="review-species-row">
+          <div class="review-species-info">
+            <label>Species</label>
+            <div id="review-species-display" class="review-species-display"></div>
+          </div>
+          <button id="review-confirm-species-btn" class="confirm-btn">✓ Confirm</button>
+          <button id="review-edit-species-btn" class="edit-species-btn">Wrong? Edit</button>
+        </div>
+
+        <div class="review-fields-grid">
+          <label>Date<input type="text" id="review-field-date" placeholder="YYYY-MM-DD"></label>
+          <label>Time<input type="text" id="review-field-time" placeholder="HH:MM:SS"></label>
+          <label>Location<input type="text" id="review-field-location"></label>
+          <label>Diel Period<input type="text" id="review-field-diel_period"></label>
+          <label>Temperature<input type="text" id="review-field-temperature"></label>
+          <label>Count<input type="number" min="0" id="review-field-count"></label>
+          <label class="review-full-width">File Name<input type="text" id="review-field-filename"></label>
+          <label class="review-full-width">Notes<input type="text" id="review-field-notes"></label>
+        </div>
       </div>
     </div>
   </section>
@@ -125,7 +168,7 @@
             <th>Notes</th>
             <th>File Name</th>
             <th>Diel Period</th>
-            <th id="temperature-header" class="temp-toggle-header" title="Click to switch between °F and °C">Temp (°<span id="temp-unit-label">F</span>)</th>
+            <th id="temperature-header" class="temp-toggle-header" title="Click to switch between °F and °C">Temperature (<span id="temp-unit-label">F</span>)</th>
             <th class="menu-col"></th>
           </tr>
         </thead>

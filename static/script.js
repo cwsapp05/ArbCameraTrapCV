@@ -13,7 +13,12 @@ document.getElementById("title-emoji").textContent =
   TITLE_EMOJIS[Math.floor(Math.random() * TITLE_EMOJIS.length)];
 // ---- Tabs ----
 document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", async () => {
+    const previousTab = document.querySelector(".tab-btn.active")?.dataset.tab;
+    if (previousTab === "review" && btn.dataset.tab !== "review") {
+      await saveCurrentReviewFields(); // don't lose pending edits when navigating away
+    }
+
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
     btn.classList.add("active");
@@ -24,6 +29,9 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
       loadUploadHistory();
     } else {
       clearTimeout(queuePollTimer);
+    }
+    if (btn.dataset.tab === "review") {
+      loadReviewQueue();
     }
     if (btn.dataset.tab === "library") {
       refreshSpeciesData().then(showLibraryGroups); // always start fresh at the group view
@@ -240,6 +248,173 @@ function queueItem(job, kind, position) {
 
   return li;
 }
+
+// ---- Review tab ----
+// One-at-a-time review queue: unreviewed videos (still on the AI's original
+// guess), excluding hidden groups. The queue is a snapshot taken when the
+// tab is opened — it doesn't shrink live as you confirm things, so
+// Previous/Next stay stable mid-session; re-entering the tab (or reaching
+// the end) re-fetches fresh to pick up anything newly uploaded or already
+// reviewed elsewhere.
+let reviewQueue = [];
+let reviewIndex = 0;
+
+async function loadReviewQueue() {
+  const res = await fetch("/api/videos");
+  const vids = await res.json();
+  reviewQueue = vids.filter(v => !v.corrected_species && !hiddenGroups.includes(v.display_species));
+  reviewIndex = 0;
+  renderReviewCard();
+}
+
+function renderReviewCard() {
+  const empty = document.getElementById("review-empty");
+  const content = document.getElementById("review-content");
+  const progress = document.getElementById("review-progress");
+
+  if (reviewQueue.length === 0) {
+    empty.classList.remove("hidden");
+    content.classList.add("hidden");
+    progress.textContent = "";
+    return;
+  }
+
+  empty.classList.add("hidden");
+  content.classList.remove("hidden");
+
+  const v = reviewQueue[reviewIndex];
+  progress.textContent = `Reviewing ${reviewIndex + 1} of ${reviewQueue.length}`;
+
+  const player = document.getElementById("review-video-player");
+  player.src = `/media/${v.id}`;
+  player.play().catch(() => {}); // browser may block autoplay — not an error, just ignore
+
+  const cropImg = document.getElementById("review-bar-crop-img");
+  if (v.has_bar_crop) {
+    cropImg.src = `/api/videos/${v.id}/bar-crop`;
+    cropImg.classList.remove("hidden");
+  } else {
+    cropImg.classList.add("hidden");
+  }
+
+  updateReviewSpeciesDisplay();
+
+  document.getElementById("review-field-date").value = v.date || "";
+  document.getElementById("review-field-time").value = v.time || "";
+  document.getElementById("review-field-location").value = v.location || "";
+  document.getElementById("review-field-diel_period").value = v.diel_period || "";
+  document.getElementById("review-field-temperature").value = formatTemperatureForDisplay(v.temperature, temperatureDisplayUnit);
+  document.getElementById("review-field-count").value = v.count ?? 1;
+  document.getElementById("review-field-filename").value = stripExtension(v.display_filename || v.filename);
+  document.getElementById("review-field-notes").value = v.notes || "";
+
+  document.getElementById("review-prev-btn").disabled = reviewIndex === 0;
+}
+
+function updateReviewSpeciesDisplay() {
+  const v = reviewQueue[reviewIndex];
+  if (!v) return;
+  const display = document.getElementById("review-species-display");
+  display.textContent = v.display_species;
+  display.classList.toggle("confirmed", !!v.corrected_species);
+}
+
+document.getElementById("review-confirm-species-btn").addEventListener("click", async () => {
+  const v = reviewQueue[reviewIndex];
+  if (!v) return;
+  const data = await saveCorrection(v.id, v.ai_species || "blank");
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+  Object.assign(v, data);
+  updateReviewSpeciesDisplay();
+});
+
+document.getElementById("review-edit-species-btn").addEventListener("click", () => {
+  const v = reviewQueue[reviewIndex];
+  if (v) openSpeciesModal(v.id, "review");
+});
+
+async function saveCurrentReviewFields() {
+  if (reviewQueue.length === 0 || reviewIndex >= reviewQueue.length) return;
+  const v = reviewQueue[reviewIndex];
+
+  const payload = {
+    date: document.getElementById("review-field-date").value.trim(),
+    time: document.getElementById("review-field-time").value.trim(),
+    location: document.getElementById("review-field-location").value.trim(),
+    diel_period: document.getElementById("review-field-diel_period").value.trim(),
+    count: document.getElementById("review-field-count").value,
+    notes: document.getElementById("review-field-notes").value,
+    display_filename: document.getElementById("review-field-filename").value.trim(),
+  };
+
+  // Same "tag with the currently-displayed unit" treatment as the
+  // Spreadsheet tab, so a plain typed number is interpreted correctly.
+  const tempRaw = document.getElementById("review-field-temperature").value.trim();
+  if (tempRaw !== "") {
+    const num = parseFloat(tempRaw);
+    payload.temperature = isNaN(num) ? tempRaw : `${num}°${temperatureDisplayUnit}`;
+  } else {
+    payload.temperature = "";
+  }
+
+  const res = await fetch(`/api/videos/${v.id}/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!data.error) Object.assign(v, data);
+}
+
+async function reviewAdvance(delta) {
+  await saveCurrentReviewFields();
+
+  const content = document.getElementById("review-content");
+  const noOp = delta < 0 && reviewIndex === 0; // Previous at the very start — nothing to animate
+  if (!noOp) {
+    content.classList.add(delta > 0 ? "review-swipe-exit-left" : "review-swipe-exit-right");
+    await new Promise(r => setTimeout(r, 180)); // matches the CSS transition duration below
+  }
+
+  reviewIndex += delta;
+
+  if (reviewIndex < 0) {
+    reviewIndex = 0;
+    renderReviewCard();
+    content.classList.remove("review-swipe-exit-left", "review-swipe-exit-right");
+    return;
+  }
+  if (reviewIndex >= reviewQueue.length) {
+    await loadReviewQueue(); // reached the end — refetch for anything new
+    content.classList.remove("review-swipe-exit-left", "review-swipe-exit-right");
+    return;
+  }
+
+  renderReviewCard();
+
+  // Position the new card off-screen on the side it should enter from,
+  // instantly (transition disabled), then remove that offset so the normal
+  // transition animates it back to center — the standard trick for a
+  // directional re-entry without a JS animation library.
+  content.classList.remove("review-swipe-exit-left", "review-swipe-exit-right");
+  content.classList.add("review-swipe-instant", delta > 0 ? "review-swipe-exit-right" : "review-swipe-exit-left");
+  void content.offsetWidth; // force a reflow so the instant position is actually applied first
+  content.classList.remove("review-swipe-instant", "review-swipe-exit-left", "review-swipe-exit-right");
+}
+
+document.getElementById("review-next-btn").addEventListener("click", () => reviewAdvance(1));
+document.getElementById("review-prev-btn").addEventListener("click", () => reviewAdvance(-1));
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  if (!document.getElementById("tab-review").classList.contains("active")) return;
+  if (!document.getElementById("species-modal").classList.contains("hidden")) return; // let the species search modal use Enter normally
+  e.preventDefault();
+  reviewAdvance(1);
+});
 
 // ---- Species data ----
 let unreviewedCountsBySpecies = {}; // display_species -> count of videos still on the AI's original guess
@@ -645,11 +820,12 @@ async function deleteVideo(videoId) {
 }
 
 async function saveCorrection(videoId, species) {
-  await fetch(`/api/videos/${videoId}/correct`, {
+  const res = await fetch(`/api/videos/${videoId}/correct`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ species }),
   });
+  return res.json();
 }
 
 // ---- "Add new species" modal ----
@@ -705,9 +881,22 @@ function renderModalList(query) {
     item.appendChild(count);
 
     item.addEventListener("click", async () => {
-      await saveCorrection(modalTargetVideoId, s.label);
+      const targetVideoId = modalTargetVideoId; // captured BEFORE closeSpeciesModal() clears it below
+      const data = await saveCorrection(targetVideoId, s.label);
       const whichTab = modal.dataset.whichTab;
       closeSpeciesModal();
+
+      if (whichTab === "review") {
+        if (!data.error) {
+          const v = reviewQueue[reviewIndex];
+          if (v && v.id === targetVideoId) Object.assign(v, data);
+          updateReviewSpeciesDisplay();
+        } else {
+          alert(data.error);
+        }
+        return;
+      }
+
       await refreshSpeciesData();
       if (whichTab === "lib") {
         loadLibrary(); // group counts refresh next time "Back to species" is clicked
