@@ -922,6 +922,7 @@ refreshSpeciesData(); // populates the Library tab's unreviewed-count badge imme
 
 // ---- Spreadsheet tab ----
 const SPREADSHEET_FIELDS = ["date", "time", "location", "species", "count", "notes", "filename", "diel_period", "temperature"];
+const SPREADSHEET_HEADERS = ["Date", "Time", "Location", "Species", "Count", "Notes", "File Name", "Diel Period", "Temp"];
 
 // Persisted across refreshes and tab switches via localStorage — this is a
 // real browser app (not a sandboxed artifact), so localStorage is fine here.
@@ -1616,3 +1617,52 @@ function autoCloseBarCropForRow(tr) {
     if (arrowBtn) arrowBtn.classList.remove("expanded");
   }
 }
+
+function exportSpreadsheetToCSV() {
+  const tbody = document.getElementById("spreadsheet-body");
+  const rows = tbody.querySelectorAll("tr");
+
+  if (rows.length === 0) {
+    alert("No data to export!");
+    return;
+  }
+
+  // Build CSV Header
+  let csvLines = [SPREADSHEET_HEADERS.join(",")];
+
+  // Format and escape cell values for CSV formatting
+  rows.forEach(tr => {
+    const rowValues = SPREADSHEET_FIELDS.map(field => {
+      const cell = tr.querySelector(`td[data-field="${field}"]`);
+      let val = cell ? cell.textContent : "";
+      
+      // Escape inner double quotes
+      val = val.replace(/"/g, '""');
+      
+      // Wrap in double quotes if string contains commas or newlines
+      if (val.includes(",") || val.includes("\n") || val.includes('"')) {
+        val = `"${val}"`;
+      }
+      return val;
+    });
+    csvLines.push(rowValues.join(","));
+  });
+
+  const csvString = csvLines.join("\n");
+
+  // Create blob and trigger automatic browser download
+  const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const today = new Date().toISOString().slice(0, 10);
+  
+  link.setAttribute("href", url);
+  link.setAttribute("download", `trail_cam_species_export_${today}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// Bind button event listener
+document.getElementById("export-csv-btn")?.addEventListener("click", exportSpreadsheetToCSV);
