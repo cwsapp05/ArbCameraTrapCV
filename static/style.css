@@ -1111,3 +1111,17 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   padding: 0.2rem 0.5rem;
 }
 .video-modal-close:hover { background: none; color: #d0d5dc; }
+
+.app-credit {
+  text-align: center;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  /*border-top: 1px solid rgba(255, 255, 255, 0.08); */
+  font-size: 0.85rem;
+  color: #888;
+}
+
+.app-credit strong {
+  color: #bbb;
+  font-weight: 600;
+}
