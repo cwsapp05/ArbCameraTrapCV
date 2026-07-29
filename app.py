@@ -32,7 +32,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, abort
+from flask import Flask, jsonify, render_template, request, send_from_directory, abort, Response
+import cv2
 
 import bar_ocr
 
@@ -46,6 +47,11 @@ BAR_CROPS_DIR.mkdir(exist_ok=True)
 JOBS_INDEX_FILE = RUNS_DIR / "jobs_index.json"
 VIDEOS_INDEX_FILE = RUNS_DIR / "videos_index.json"
 SPECIES_LIST_FILE = RUNS_DIR / "species_list.json"
+OCR_CONFIGS_FILE = RUNS_DIR / "ocr_configs.json"
+
+# Reserved dropdown values that are never real saved config names.
+SKIP_OCR_VALUE = "__skip_ocr__"
+CONFIGURE_NEW_VALUE = "__configure_new__"
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".wmv"}
 
@@ -62,6 +68,17 @@ videos_lock = threading.Lock()
 
 canonical_species = []  # full taxonomy the classifier can produce, incl. "blank"
 species_lock = threading.Lock()
+
+# Named OCR crop-box presets. Each config: {"bar_box": [l,t,r,b] or None,
+# "date_box": ..., "time_box": ..., "location_box": ...} — any box can be
+# None if that field was skipped in the wizard, meaning it's never OCR'd for
+# jobs run with that config. Temperature is NOT part of this system — it
+# stays on bar_ocr.py's own single global CROP_BOXES["temperature"],
+# unaffected by which config is selected (the wizard only covers Date/Time/
+# Location, per how it was specified).
+ocr_configs = {}
+ocr_last_used = None
+ocr_configs_lock = threading.Lock()
 
 _seq_counter = 0  # monotonic; started_at's second-level precision isn't enough
                    # to order jobs submitted within the same second
@@ -109,9 +126,38 @@ def save_species_list():
             json.dump(canonical_species, f, indent=2)
 
 
+def save_ocr_configs():
+    with ocr_configs_lock:
+        with open(OCR_CONFIGS_FILE, "w") as f:
+            json.dump({"configs": ocr_configs, "last_used": ocr_last_used}, f, indent=2)
+
+
+def load_ocr_configs():
+    """
+    Loads saved OCR configs. If none have been saved yet, starts with NO
+    configs at all — the default is "Skip OCR" until someone actually goes
+    through the wizard. (An earlier version auto-seeded a "Default" config
+    from bar_ocr.py's old hardcoded CROP_BOXES, but silently reusing
+    unverified legacy pixel values as a real default risks exactly the kind
+    of misaligned-crop bug already found in practice — better to start from
+    nothing and make configuration explicit.)
+    """
+    global ocr_configs, ocr_last_used
+    loaded = load_json(OCR_CONFIGS_FILE, None)
+    if loaded is not None:
+        ocr_configs = loaded.get("configs", {})
+        ocr_last_used = loaded.get("last_used")
+        return
+
+    ocr_configs = {}
+    ocr_last_used = SKIP_OCR_VALUE
+    save_ocr_configs()
+
+
 jobs = load_json(JOBS_INDEX_FILE, {})
 videos = load_json(VIDEOS_INDEX_FILE, {})
 canonical_species = load_json(SPECIES_LIST_FILE, [])
+load_ocr_configs()
 
 # Videos created before Date/Time/Location/Count/Notes/Diel Period existed
 # won't have these keys — fill in defaults so the UI doesn't break on them.
@@ -137,11 +183,76 @@ for _job in sorted(jobs.values(), key=lambda j: j.get("seq", 0)):
         job_queue.append(_job["id"])
 
 
-def run_bar_ocr_safe(folder, filename):
+def _scale_box(box, ref_width, ref_height, frame_width, frame_height):
+    """
+    Scales a crop box from the resolution it was CALIBRATED against
+    (ref_width/ref_height — the sample frame's actual size when the wizard
+    drew it) to whatever resolution THIS particular video's frame is.
+    Without this, a fixed-pixel box only lines up correctly for clips that
+    happen to match the exact resolution of the one sample used during
+    calibration — if even one clip in a batch has a different resolution (a
+    genuinely common trail-cam scenario: settings changed mid-deployment, a
+    swapped camera unit, etc.), the box silently misaligns for that clip,
+    typically truncating text at one edge while working fine elsewhere.
+
+    Configs saved before this existed (no ref_width/ref_height stored) skip
+    scaling entirely and behave exactly as before — no regression for
+    already-working setups.
+    """
+    if not ref_width or not ref_height:
+        return box
+    if ref_width == frame_width and ref_height == frame_height:
+        return box
+    scale_x = frame_width / ref_width
+    scale_y = frame_height / ref_height
+    left, top, right, bottom = box
+    return (
+        int(round(left * scale_x)), int(round(top * scale_y)),
+        int(round(right * scale_x)), int(round(bottom * scale_y)),
+    )
+
+
+def _resolve_ocr_config(ocr_config_name):
+    """
+    Looks up a named OCR config with sensible fallback: the given name, else
+    the last-used one, else any config that exists. Returns None if
+    ocr_config_name is exactly SKIP_OCR_VALUE (OCR skipped entirely for this
+    job) or if no configs exist at all — both callers (run_bar_ocr_safe and
+    the bar-crop QA image) treat None the same way: nothing to go on, so
+    that piece of work just doesn't happen for this video.
+    """
+    if ocr_config_name == SKIP_OCR_VALUE:
+        return None
+    with ocr_configs_lock:
+        return (
+            ocr_configs.get(ocr_config_name)
+            or ocr_configs.get(ocr_last_used)
+            or next(iter(ocr_configs.values()), None)
+        )
+
+
+def run_bar_ocr_safe(folder, filename, ocr_config_name=None):
     """
     Wraps bar_ocr's pipeline for one video file. Never raises — a single
     unreadable clip or OCR hiccup shouldn't take down the whole job's sync;
-    it just gets blank date/time/location/diel_period/temperature, correctable by hand.
+    it just gets blank fields, correctable by hand.
+
+    ocr_config_name selects which saved bar region to use (see ocr_configs).
+    Rather than cropping separate Date/Time/Temperature/Location boxes, the
+    WHOLE bar is OCR'd as one string and split apart by PATTERN, not
+    position (see bar_ocr.parse_bar_text) — this is what makes Location
+    immune to Temperature's varying width (1 vs. 2-digit Celsius, a
+    negative sign, etc.) shifting where it lands, since nothing is cropped
+    based on an assumed fixed position for it anymore.
+
+    Passing SKIP_OCR_VALUE — or having no configs saved at all — skips
+    everything; every field stays blank. Diel Period stays blank too if
+    EITHER date or time couldn't be read from that reading.
+
+    The bar box is scaled from the config's calibration resolution to THIS
+    video's actual frame size (see _scale_box) — this is what keeps a
+    single config working correctly across a batch where clips don't all
+    share the exact same resolution.
     """
     defaults = {"date": None, "time": None, "location": None, "diel_period": None, "temperature": None}
     try:
@@ -149,22 +260,31 @@ def run_bar_ocr_safe(folder, filename):
         if not video_path.is_file():
             return defaults
         frame = bar_ocr.extract_first_frame(video_path)
-
-        raw_date = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["date"], whitelist="0123456789/-")
-        raw_time = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["time"], whitelist="0123456789:APM ")
-        location = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["location"])
-        raw_temperature = bar_ocr.ocr_field(frame, bar_ocr.CROP_BOXES["temperature"], whitelist="0123456789°CF ")
-
-        parsed_date = bar_ocr.parse_date(raw_date)
-        parsed_time = bar_ocr.parse_time(raw_time)
+        frame_height, frame_width = frame.shape[:2]
 
         result = dict(defaults)
-        result["location"] = location or None
-        result["temperature"] = raw_temperature or None
+
+        config = _resolve_ocr_config(ocr_config_name)
+        if not config or not config.get("bar_box"):
+            return result  # Skip OCR selected, or no usable config — every field stays blank
+
+        bar_box = _scale_box(
+            tuple(config["bar_box"]), config.get("ref_width"), config.get("ref_height"),
+            frame_width, frame_height,
+        )
+        raw_bar_text = bar_ocr.ocr_field(frame, bar_box, whitelist=bar_ocr.BAR_WHITELIST, psm=7)
+        parsed = bar_ocr.parse_bar_text(raw_bar_text)
+
+        parsed_date = bar_ocr.parse_date(parsed["raw_date"]) if parsed["raw_date"] else None
+        parsed_time = bar_ocr.parse_time(parsed["raw_time"]) if parsed["raw_time"] else None
+
         if parsed_date:
             result["date"] = parsed_date.isoformat()
         if parsed_time:
             result["time"] = f"{parsed_time[0]:02d}:{parsed_time[1]:02d}:{parsed_time[2]:02d}"
+        result["temperature"] = parsed["raw_temperature"]
+        result["location"] = parsed["location"]
+
         if parsed_date and parsed_time:
             dt = datetime.combine(parsed_date, datetime.min.time()).replace(
                 hour=parsed_time[0], minute=parsed_time[1], second=parsed_time[2]
@@ -176,19 +296,30 @@ def run_bar_ocr_safe(folder, filename):
         return defaults
 
 
-def save_bar_crop_safe(folder, filename, video_id):
+def save_bar_crop_safe(folder, filename, video_id, bar_box, ref_width=None, ref_height=None):
     """
-    Saves the full info-bar QA crop for one video to BAR_CROPS_DIR, named by
-    video_id. Never raises — same reasoning as run_bar_ocr_safe: one bad clip
-    shouldn't take down the whole job's sync. Returns True/False for whether
-    it succeeded (used to decide whether the "show crop" button should exist).
+    Saves the full info-bar QA crop for one video to BAR_CROPS_DIR, using
+    the given bar_box (the active job's OCR config, or None for Skip OCR /
+    no configs at all), scaled to this specific video's actual resolution
+    via _scale_box — same reasoning as run_bar_ocr_safe. Never raises: one
+    bad clip shouldn't take down the whole job's sync. Returns True/False
+    for whether it succeeded — used to decide whether the Spreadsheet's
+    "show cropped info bar" arrow exists for this video at all. With no
+    bar_box (Skip OCR was used), there's genuinely nothing to crop, so this
+    returns False rather than falling back to some other camera's region
+    and showing a meaningless image.
     """
+    if not bar_box:
+        return False
     try:
         video_path = Path(folder) / filename
         if not video_path.is_file():
             return False
+        frame = bar_ocr.extract_first_frame(video_path)
+        frame_height, frame_width = frame.shape[:2]
+        left, top, right, bottom = _scale_box(tuple(bar_box), ref_width, ref_height, frame_width, frame_height)
         output_path = BAR_CROPS_DIR / f"{video_id}.png"
-        bar_ocr.save_bar_crop(video_path, output_path)
+        cv2.imwrite(str(output_path), frame[top:bottom, left:right])
         return True
     except Exception as e:
         print(f"Bar crop save failed for {folder}/{filename}: {e}")
@@ -257,7 +388,11 @@ def sync_videos_from_job(job_id):
             )
 
         vid = video_id_for(job_id, filename)
-        has_bar_crop = save_bar_crop_safe(job["folder"], filename, vid)
+        job_ocr_config = _resolve_ocr_config(job.get("ocr_config"))
+        bar_box = job_ocr_config.get("bar_box") if job_ocr_config else None
+        ref_width = job_ocr_config.get("ref_width") if job_ocr_config else None
+        ref_height = job_ocr_config.get("ref_height") if job_ocr_config else None
+        has_bar_crop = save_bar_crop_safe(job["folder"], filename, vid, bar_box, ref_width, ref_height)
 
         with videos_lock:
             existing = videos.get(vid, {})
@@ -276,7 +411,7 @@ def sync_videos_from_job(job_id):
                     "diel_period": existing.get("diel_period"),
                 }
             else:
-                ocr_fields = run_bar_ocr_safe(job["folder"], filename)
+                ocr_fields = run_bar_ocr_safe(job["folder"], filename, job.get("ocr_config"))
 
             videos[vid] = {
                 "id": vid,
@@ -425,11 +560,20 @@ def run_job():
     folder = (data.get("folder") or "").strip()
     country = (data.get("country") or "").strip()
     state = (data.get("state") or "").strip()
+    ocr_config = (data.get("ocr_config") or "").strip()
 
     if not folder:
         return jsonify({"error": "No folder provided"}), 400
     if not Path(folder).is_dir():
         return jsonify({"error": f"Folder not found: {folder}"}), 400
+    if ocr_config == CONFIGURE_NEW_VALUE:
+        return jsonify({"error": "Finish configuring OCR settings before starting processing"}), 400
+
+    global ocr_last_used
+    if ocr_config:
+        with ocr_configs_lock:
+            ocr_last_used = ocr_config
+        save_ocr_configs()
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = RUNS_DIR / job_id
@@ -452,6 +596,7 @@ def run_job():
             "folder": folder,
             "country": country,
             "state": state,
+            "ocr_config": ocr_config,
             "status": "queued",
             "seq": _next_seq(),
             "started_at": datetime.now().isoformat(timespec="seconds"),
@@ -468,6 +613,154 @@ def run_job():
         queue_cv.notify()
 
     return jsonify({"job_id": job_id, "queue_position": queue_position(job_id)})
+
+
+@app.route("/api/ocr-configs")
+def list_ocr_configs():
+    """Named OCR presets for the Upload tab's dropdown, plus which was used last (the default selection)."""
+    with ocr_configs_lock:
+        names = sorted(ocr_configs.keys())
+        last_used = ocr_last_used
+    return jsonify({"configs": names, "last_used": last_used})
+
+
+@app.route("/api/ocr-configs", methods=["POST"])
+def save_ocr_config():
+    """Saves a new named OCR preset (or overwrites one with the same name) from the wizard's final step."""
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    if name in (SKIP_OCR_VALUE, CONFIGURE_NEW_VALUE):
+        return jsonify({"error": "That name is reserved"}), 400
+
+    def clean_box(box):
+        if not box or not (isinstance(box, list) and len(box) == 4):
+            return None
+        try:
+            return [int(round(x)) for x in box]
+        except (TypeError, ValueError):
+            return None
+
+    def clean_dim(value):
+        try:
+            value = int(value)
+            return value if value > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    bar_box = clean_box(data.get("bar_box"))
+    if not bar_box:
+        return jsonify({"error": "A bar region is required"}), 400
+
+    global ocr_last_used
+    with ocr_configs_lock:
+        ocr_configs[name] = {
+            "bar_box": bar_box,
+            # The sample frame's actual size when this box was drawn — lets
+            # OCR scale it correctly for any other video whose resolution
+            # doesn't exactly match (see _scale_box).
+            "ref_width": clean_dim(data.get("ref_width")),
+            "ref_height": clean_dim(data.get("ref_height")),
+        }
+        ocr_last_used = name
+    save_ocr_configs()
+    return jsonify({"name": name})
+
+
+@app.route("/api/ocr-configs/<name>", methods=["DELETE"])
+def delete_ocr_config(name):
+    """Removes a saved OCR preset. If it was the most-recently-used one, the
+    default falls back to 'None' (Skip OCR) rather than pointing at a config
+    that no longer exists."""
+    global ocr_last_used
+    with ocr_configs_lock:
+        if name not in ocr_configs:
+            return jsonify({"error": "Unknown preset"}), 404
+        del ocr_configs[name]
+        if ocr_last_used == name:
+            ocr_last_used = SKIP_OCR_VALUE
+    save_ocr_configs()
+    return jsonify({"deleted": name})
+
+
+def find_first_video_in_folder(folder):
+    folder_path = Path(folder)
+    candidates = sorted(
+        p for p in folder_path.iterdir()
+        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+    )
+    return candidates[0] if candidates else None
+
+
+@app.route("/api/ocr-wizard/first-frame")
+def ocr_wizard_first_frame():
+    """
+    Returns the first frame of the first video (alphabetically) in the given
+    folder as a PNG image — the sample frame the OCR-config wizard shows for
+    drawing crop boxes on.
+    """
+    folder = request.args.get("folder", "")
+    if not folder or not Path(folder).is_dir():
+        return jsonify({"error": "Folder not found"}), 400
+
+    video_path = find_first_video_in_folder(folder)
+    if not video_path:
+        return jsonify({"error": "No video files found in this folder"}), 400
+
+    try:
+        frame = bar_ocr.extract_first_frame(video_path)
+    except Exception as e:
+        return jsonify({"error": f"Could not read a frame from {video_path.name}: {e}"}), 500
+
+    ok, encoded = cv2.imencode(".png", frame)
+    if not ok:
+        return jsonify({"error": "Failed to encode the frame as an image"}), 500
+    return Response(encoded.tobytes(), mimetype="image/png")
+
+
+@app.route("/api/ocr-wizard/preview-readings", methods=["POST"])
+def ocr_wizard_preview_readings():
+    """
+    Runs the SAME whole-bar-OCR-and-parse the real pipeline uses (see
+    run_bar_ocr_safe) against the sample frame used to draw the bar region
+    — no resolution scaling needed here, since this IS the calibration
+    frame. Lets the wizard show "here's what this region actually reads"
+    before saving, so a misaligned or too-tight bar box is obvious
+    immediately instead of discovered days later across a whole batch.
+    """
+    data = request.get_json(force=True)
+    folder = data.get("folder", "")
+    if not folder or not Path(folder).is_dir():
+        return jsonify({"error": "Folder not found"}), 400
+
+    video_path = find_first_video_in_folder(folder)
+    if not video_path:
+        return jsonify({"error": "No video files found in this folder"}), 400
+
+    bar_box = data.get("bar_box")
+    if not bar_box or not (isinstance(bar_box, list) and len(bar_box) == 4):
+        return jsonify({"error": "No bar region provided"}), 400
+
+    try:
+        frame = bar_ocr.extract_first_frame(video_path)
+    except Exception as e:
+        return jsonify({"error": f"Could not read a frame from {video_path.name}: {e}"}), 500
+
+    try:
+        box = tuple(int(round(x)) for x in bar_box)
+        raw_bar_text = bar_ocr.ocr_field(frame, box, whitelist=bar_ocr.BAR_WHITELIST, psm=7)
+        parsed = bar_ocr.parse_bar_text(raw_bar_text)
+    except Exception as e:
+        return jsonify({"error": f"OCR failed: {e}"}), 500
+
+    return jsonify({
+        "raw_bar_text": raw_bar_text,
+        "date": parsed["raw_date"],
+        "time": parsed["raw_time"],
+        "temperature": parsed["raw_temperature"],
+        "location": parsed["location"],
+    })
 
 
 @app.route("/api/status/<job_id>")

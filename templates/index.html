@@ -42,6 +42,9 @@
         </div>
       </div>
 
+      <label>Optical Character Recognition (OCR) settings</label>
+      <select id="ocr-config-select"></select>
+
       <button id="run-btn" disabled>Start Processing</button>
       <p id="submit-confirmation" class="muted hidden"></p>
     </div>
@@ -260,6 +263,51 @@
     </div>
 
     <div id="hidden-groups-list" class="hidden-groups-chips"></div>
+
+    <label>Temperature unit</label>
+    <div class="temp-unit-toggle-group">
+      <button type="button" id="settings-temp-f-btn" class="temp-unit-btn">°F</button>
+      <button type="button" id="settings-temp-c-btn" class="temp-unit-btn">°C</button>
+    </div>
+
+    <label>OCR setting presets</label>
+    <div id="ocr-presets-list" class="ocr-presets-list"></div>
+  </div>
+</div>
+
+<!-- OCR configuration wizard, opened from the Upload tab's OCR Settings dropdown -->
+<div id="ocr-wizard-modal" class="modal-overlay hidden">
+  <div class="modal-box ocr-wizard-box">
+    <div class="modal-header">
+      <h3 id="ocr-wizard-title">Configure OCR</h3>
+      <button id="ocr-wizard-close-btn" class="modal-close">✕</button>
+    </div>
+
+    <p id="ocr-wizard-instructions" class="ocr-wizard-instructions"></p>
+
+    <div class="ocr-wizard-toolbar">
+      <label class="ocr-wizard-magnifier-toggle">
+        <input type="checkbox" id="ocr-wizard-magnifier-toggle" checked>
+        Magnifier
+      </label>
+      <button type="button" id="ocr-wizard-reset-btn" class="ocr-wizard-reset-btn" disabled>Reset selection</button>
+    </div>
+
+    <div id="ocr-wizard-canvas-wrap" class="ocr-wizard-canvas-wrap">
+      <canvas id="ocr-wizard-canvas"></canvas>
+      <canvas id="ocr-wizard-magnifier" width="160" height="160" class="ocr-wizard-magnifier"></canvas>
+    </div>
+
+    <div id="ocr-wizard-confirm-step" class="hidden">
+      <div id="ocr-wizard-previews" class="ocr-wizard-previews"></div>
+      <label>Settings name</label>
+      <input type="text" id="ocr-wizard-config-name" placeholder="e.g. Bushnell Core S-4K">
+    </div>
+
+    <div class="ocr-wizard-nav">
+      <button id="ocr-wizard-back-btn" type="button">← Back</button>
+      <button id="ocr-wizard-next-btn" type="button" class="ocr-wizard-primary">Next →</button>
+    </div>
   </div>
 </div>
 

@@ -75,10 +75,11 @@ def extract_first_frame(video_path):
 BAR_QA_CROP_BOX = (288, 1012, 1307, 1064)  # left, top, right, bottom
 
 
-def save_bar_crop(video_path, output_path):
-    """Extract the first frame, crop to the full info bar, and save as a PNG."""
+def save_bar_crop(video_path, output_path, box=None):
+    """Extract the first frame, crop to the given box (or the legacy global
+    BAR_QA_CROP_BOX if none is given), and save as a PNG."""
     frame = extract_first_frame(video_path)
-    left, top, right, bottom = BAR_QA_CROP_BOX
+    left, top, right, bottom = box if box else BAR_QA_CROP_BOX
     crop = frame[top:bottom, left:right]
     cv2.imwrite(str(output_path), crop)
 
@@ -92,22 +93,87 @@ def preprocess_for_ocr(crop):
     return thresh
 
 
-def ocr_field(frame, box, whitelist=None):
+def ocr_field(frame, box, whitelist=None, psm=8):
     left, top, right, bottom = box
     crop = frame[top:bottom, left:right]
     processed = preprocess_for_ocr(crop)
     # --psm 8 (treat as a single word/token) tested 15/15 correct against a
     # randomized-degradation stress test of your actual "21:07:16" crop,
     # vs. 8/15 for the previous --psm 7 (single line) — psm 7 was the real
-    # source of the "91" misread, not font/threshold polarity.
-    config = "--psm 8"
+    # source of the "91" misread, not font/threshold polarity. That tuning
+    # was specific to reading ONE isolated field; a whole multi-word bar
+    # read (see BAR_WHITELIST / parse_bar_text) needs psm 7 instead, since
+    # psm 8 expects a single token and doesn't handle a line with spaces.
+    config = f"--psm {psm}"
     if whitelist:
         config += f" -c tessedit_char_whitelist={whitelist}"
     return pytesseract.image_to_string(processed, config=config).strip()
 
 
+# Broad whitelist for OCR-ing the WHOLE info bar as one string (see
+# parse_bar_text) — needs to cover every character that could appear across
+# any field: digits, letters (AM/PM, C/F, and free-text location names),
+# colon, slash, dash, degree symbol, space.
+BAR_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°/:- "
+
+
 DATE_RE = re.compile(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})")
 TIME_RE = re.compile(r"(\d{1,2}):(\d{2}):?(\d{2})?\s*([AP]M)?", re.IGNORECASE)
+
+# Used by parse_bar_text to FIND each field's substring within the whole
+# bar's OCR text (as opposed to DATE_RE/TIME_RE above, which PARSE an
+# already-isolated field's text into structured values).
+TEMP_DUAL_FINDER_RE = re.compile(r"-?\d+(?:\.\d+)?\s*°?\s*C\s*/\s*-?\d+(?:\.\d+)?\s*°?\s*F", re.IGNORECASE)
+TEMP_SINGLE_FINDER_RE = re.compile(r"-?\d+(?:\.\d+)?\s*°?\s*[CF]\b", re.IGNORECASE)
+# A tighter pattern than TIME_RE specifically for FINDING a time substring
+# within a larger string — TIME_RE's optional trailing \s*(AM|PM)? group
+# greedily consumes trailing whitespace even when no AM/PM follows, which
+# would otherwise bleed into raw_time as a stray trailing space.
+TIME_FINDER_RE = re.compile(r"\d{1,2}:\d{2}:\d{2}(?:\s*[AP]M)?", re.IGNORECASE)
+
+
+def parse_bar_text(raw_text):
+    """
+    Splits the WHOLE info bar's OCR text into Date/Time/Temperature/Location
+    by pattern, not position. This is what makes Location immune to
+    Temperature's varying width (1 vs. 2-digit Celsius, a negative sign,
+    etc.) shifting where it lands: instead of cropping a fixed pixel region
+    where Location is EXPECTED to be, we OCR the entire bar once and pull
+    out whatever matches each field's known format, wherever it actually
+    sits in that reading. Whatever text is left over after removing the
+    Date/Time/Temperature matches is treated as Location.
+
+    Returns {"raw_date": str|None, "raw_time": str|None,
+             "raw_temperature": str|None, "location": str|None} — raw_date
+    and raw_time are matched substrings, still meant to be passed through
+    parse_date()/parse_time() same as before; raw_temperature is used as-is
+    (the frontend already parses/formats it for display).
+    """
+    working = raw_text
+
+    date_match = DATE_RE.search(working)
+    raw_date = date_match.group(0) if date_match else None
+    if date_match:
+        working = working[:date_match.start()] + " " + working[date_match.end():]
+
+    time_match = TIME_FINDER_RE.search(working)
+    raw_time = time_match.group(0) if time_match else None
+    if time_match:
+        working = working[:time_match.start()] + " " + working[time_match.end():]
+
+    temp_match = TEMP_DUAL_FINDER_RE.search(working) or TEMP_SINGLE_FINDER_RE.search(working)
+    raw_temperature = temp_match.group(0) if temp_match else None
+    if temp_match:
+        working = working[:temp_match.start()] + " " + working[temp_match.end():]
+
+    location = working.strip(" -/:\t\n") or None
+
+    return {
+        "raw_date": raw_date,
+        "raw_time": raw_time,
+        "raw_temperature": raw_temperature,
+        "location": location,
+    }
 
 
 def parse_date(raw):

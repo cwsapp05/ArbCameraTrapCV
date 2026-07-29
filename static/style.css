@@ -1020,6 +1020,143 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   margin-top: 0.9rem;
 }
 
+/* ---- OCR Configuration Wizard ---- */
+.ocr-wizard-box {
+  width: 92%;
+  max-width: 700px;
+  max-height: 85vh;
+}
+
+.ocr-wizard-instructions {
+  font-size: 0.85rem;
+  color: #444b53;
+  margin: 0 0 0.8rem 0;
+}
+
+.ocr-wizard-canvas-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  background: #f6f7f9;
+  border: 1px solid #e2e5ea;
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow: auto;
+}
+
+#ocr-wizard-canvas {
+  cursor: crosshair;
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.ocr-wizard-magnifier {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%; /* clips the canvas's visual box to a circle */
+  border: 3px solid white;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+  background: black;
+  pointer-events: none; /* never intercepts mouse events meant for the canvas underneath */
+  opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 10;
+}
+.ocr-wizard-magnifier.visible { opacity: 1; }
+
+.ocr-wizard-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.ocr-wizard-magnifier-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #57606a;
+  cursor: pointer;
+}
+.ocr-wizard-magnifier-toggle input { margin: 0; }
+
+.ocr-wizard-reset-btn {
+  background: none;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.75rem;
+  border-radius: 999px;
+}
+.ocr-wizard-reset-btn:hover:not(:disabled) { background: #fef2f2; }
+.ocr-wizard-reset-btn:disabled {
+  color: #b0b6bd;
+  border-color: #e2e5ea;
+  background: none;
+  cursor: not-allowed;
+}
+
+.ocr-wizard-nav {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.ocr-wizard-nav button {
+  flex: 1;
+  background: #57606a;
+}
+.ocr-wizard-nav button:hover { background: #444b53; }
+
+.ocr-wizard-primary { background: #2563eb !important; }
+.ocr-wizard-primary:hover { background: #1d4ed8 !important; }
+.ocr-wizard-primary:disabled { background: #d0d5dc !important; cursor: not-allowed; }
+
+.ocr-wizard-skip {
+  background: none !important;
+  color: #57606a;
+  border: 1px solid #d0d5dc;
+}
+.ocr-wizard-skip:hover { background: #f6f7f9 !important; }
+
+.ocr-wizard-previews {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+}
+
+.ocr-wizard-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.ocr-wizard-preview-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #444b53;
+  width: 5rem;
+  flex-shrink: 0;
+}
+
+.ocr-wizard-preview-canvas {
+  border: 1px solid #e2e5ea;
+  border-radius: 4px;
+  max-width: 100%;
+}
+
+.ocr-wizard-preview-reading {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #444b53;
+}
+.ocr-wizard-reading-blank { color: #b91c1c; font-style: normal; }
+
 .hidden-groups-input-wrap {
   position: relative;
 }
@@ -1082,6 +1219,65 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   line-height: 1;
 }
 .hidden-group-remove:hover { background: none; color: #dc2626; }
+
+/* ---- Temperature unit toggle (Library Settings) ---- */
+.temp-unit-toggle-group {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.temp-unit-btn {
+  flex: 1;
+  background: #f1f3f5;
+  color: #57606a;
+  border: 1px solid #e2e5ea;
+}
+.temp-unit-btn:hover { background: #e9ebee; }
+.temp-unit-btn.active {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+.temp-unit-btn.active:hover { background: #1d4ed8; }
+
+/* ---- OCR presets management (Library Settings) ---- */
+.ocr-presets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.ocr-preset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  background: #f6f7f9;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.ocr-preset-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ocr-preset-remove-btn {
+  background: none;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.ocr-preset-remove-btn:hover { background: #fef2f2; }
 
 /* ---- Video popup modal ---- */
 .video-modal-box {

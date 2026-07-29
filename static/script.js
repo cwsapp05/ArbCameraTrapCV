@@ -27,6 +27,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "upload") {
       pollQueue();
       loadUploadHistory();
+      loadOcrConfigOptions();
     } else {
       clearTimeout(queuePollTimer);
     }
@@ -65,7 +66,13 @@ runBtn.addEventListener("click", async () => {
   const folder = folderInput.value;
   const country = document.getElementById("country").value;
   const state = document.getElementById("state").value;
+  const ocrConfig = document.getElementById("ocr-config-select").value;
   const confirmationEl = document.getElementById("submit-confirmation");
+
+  if (ocrConfig === CONFIGURE_NEW_VALUE) {
+    alert("Finish configuring OCR settings first — click the OCR Settings dropdown to reopen the wizard.");
+    return;
+  }
 
   runBtn.disabled = true;
   confirmationEl.classList.remove("hidden");
@@ -74,7 +81,7 @@ runBtn.addEventListener("click", async () => {
   const res = await fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ folder, country, state }),
+    body: JSON.stringify({ folder, country, state, ocr_config: ocrConfig }),
   });
   const data = await res.json();
   runBtn.disabled = false;
@@ -91,6 +98,633 @@ runBtn.addEventListener("click", async () => {
   pollQueue(); // refresh immediately rather than waiting for the next tick
   loadUploadHistory();
 });
+
+// ==================== OCR Settings (dropdown + configuration wizard) ====================
+const SKIP_OCR_VALUE = "__skip_ocr__";
+const CONFIGURE_NEW_VALUE = "__configure_new__";
+const OCR_WIZARD_MAX_DISPLAY_WIDTH = 640;
+
+let ocrPreviousSelectValue = null;
+
+async function loadOcrConfigOptions() {
+  const res = await fetch("/api/ocr-configs");
+  const data = await res.json();
+  const select = document.getElementById("ocr-config-select");
+  select.innerHTML = "";
+
+  data.configs.forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+
+  const skipOpt = document.createElement("option");
+  skipOpt.value = SKIP_OCR_VALUE;
+  skipOpt.textContent = "None (manually add date/time/etc. in Spreadsheet)";
+  select.appendChild(skipOpt);
+
+  const newOpt = document.createElement("option");
+  newOpt.value = CONFIGURE_NEW_VALUE;
+  newOpt.textContent = "+ Configure new";
+  select.appendChild(newOpt);
+
+  if (data.last_used === SKIP_OCR_VALUE) {
+    select.value = SKIP_OCR_VALUE;
+  } else if (data.last_used && data.configs.includes(data.last_used)) {
+    select.value = data.last_used;
+  } else {
+    // No valid last-used config (fresh install, or last-used config was
+    // deleted) — default to Skip OCR rather than silently picking whatever
+    // config happens to sort first.
+    select.value = SKIP_OCR_VALUE;
+  }
+  ocrPreviousSelectValue = select.value;
+}
+
+document.getElementById("ocr-config-select").addEventListener("change", (e) => {
+  if (e.target.value === CONFIGURE_NEW_VALUE) {
+    if (!folderInput.value) {
+      alert('Select a folder first, then choose "+ Configure new" — the wizard needs a sample video from that folder.');
+      e.target.value = ocrPreviousSelectValue;
+      return;
+    }
+    openOcrConfigWizard(folderInput.value);
+  } else {
+    ocrPreviousSelectValue = e.target.value;
+  }
+});
+
+// ---- Wizard state ----
+// step 1: draw a box around the WHOLE info bar, on the full first frame.
+// steps 2-4: draw a box for Date/Time/Location (each skippable), on the
+// bar-region crop from step 1. step 5: confirm + name the config.
+// Every box is stored in ORIGINAL FULL-FRAME pixel coordinates once
+// confirmed, regardless of which cropped/scaled view it was drawn on —
+// that's the coordinate space bar_ocr.ocr_field() needs on the backend.
+let ocrWizardState = null;
+let ocrRectSelection = null; // current rectangle, in CANVAS pixel coordinates
+let ocrFirstClickPoint = null; // set after the first click, cleared once the second click completes the box
+let ocrWizardDisplayScale = 1;
+
+// Move/resize interaction on an already-completed box.
+let ocrDragMode = null; // null | "moving" | "resizing"
+let ocrDragCorner = null; // which corner is being resized, and which opposite corner stays fixed
+let ocrDragStartMouse = null; // mouse pos when the current move drag started
+let ocrDragStartRect = null; // copy of ocrRectSelection when the current move drag started
+let ocrDocumentMouseMoveHandler = null; // tracked so we can remove the previous step's listener before adding a new one
+let ocrDocumentMouseUpHandler = null;
+
+const OCR_CORNER_HIT_RADIUS = 8;
+
+function hasCompleteBox() {
+  return !!(ocrRectSelection && !ocrFirstClickPoint && !rectIsTooSmall(ocrRectSelection));
+}
+
+function hitTestCorner(pos, rect) {
+  const corners = [
+    { x: rect.left, y: rect.top, fixedX: rect.right, fixedY: rect.bottom, cursor: "nwse-resize" },
+    { x: rect.right, y: rect.top, fixedX: rect.left, fixedY: rect.bottom, cursor: "nesw-resize" },
+    { x: rect.left, y: rect.bottom, fixedX: rect.right, fixedY: rect.top, cursor: "nesw-resize" },
+    { x: rect.right, y: rect.bottom, fixedX: rect.left, fixedY: rect.top, cursor: "nwse-resize" },
+  ];
+  return corners.find(c => Math.abs(pos.x - c.x) <= OCR_CORNER_HIT_RADIUS && Math.abs(pos.y - c.y) <= OCR_CORNER_HIT_RADIUS) || null;
+}
+
+function isInsideRect(pos, rect) {
+  return pos.x >= rect.left && pos.x <= rect.right && pos.y >= rect.top && pos.y <= rect.bottom;
+}
+
+function openOcrConfigWizard(folder) {
+  ocrWizardState = {
+    folder,
+    step: 1,
+    fullFrameImg: null,
+    barBox: null,
+    croppedCanvas: null,
+  };
+  document.getElementById("ocr-wizard-modal").classList.remove("hidden");
+  loadOcrWizardFrame();
+}
+
+function closeOcrWizard(restoreSelect) {
+  document.getElementById("ocr-wizard-modal").classList.add("hidden");
+  ocrWizardState = null;
+  ocrRectSelection = null;
+  ocrFirstClickPoint = null;
+  ocrDragMode = null;
+  ocrDragCorner = null;
+  ocrDragStartMouse = null;
+  ocrDragStartRect = null;
+  if (ocrDocumentMouseMoveHandler) {
+    document.removeEventListener("mousemove", ocrDocumentMouseMoveHandler);
+    ocrDocumentMouseMoveHandler = null;
+  }
+  if (ocrDocumentMouseUpHandler) {
+    document.removeEventListener("mouseup", ocrDocumentMouseUpHandler);
+    ocrDocumentMouseUpHandler = null;
+  }
+  if (restoreSelect) {
+    document.getElementById("ocr-config-select").value = ocrPreviousSelectValue;
+  }
+}
+
+document.getElementById("ocr-wizard-close-btn").addEventListener("click", () => closeOcrWizard(true));
+document.getElementById("ocr-wizard-modal").addEventListener("click", (e) => {
+  if (e.target.id === "ocr-wizard-modal") closeOcrWizard(true); // clicking the dim backdrop cancels
+});
+
+async function loadOcrWizardFrame() {
+  const img = new Image();
+  img.onload = () => {
+    ocrWizardState.fullFrameImg = img;
+    renderOcrWizardStep();
+  };
+  img.onerror = () => {
+    alert("Could not load a preview frame from this folder — make sure it contains a readable video file.");
+    closeOcrWizard(true);
+  };
+  img.src = `/api/ocr-wizard/first-frame?folder=${encodeURIComponent(ocrWizardState.folder)}&t=${Date.now()}`;
+}
+
+function fitScale(naturalWidth, maxWidth) {
+  return naturalWidth > maxWidth ? maxWidth / naturalWidth : 1;
+}
+
+function rectIsTooSmall(rect) {
+  return (rect.right - rect.left) < 5 || (rect.bottom - rect.top) < 5;
+}
+
+function getRectCorners(rect) {
+  return [
+    { x: rect.left, y: rect.top },
+    { x: rect.right, y: rect.top },
+    { x: rect.left, y: rect.bottom },
+    { x: rect.right, y: rect.bottom },
+  ];
+}
+
+function canvasRectToImageRect(rect, scale) {
+  return {
+    left: Math.round(rect.left / scale),
+    top: Math.round(rect.top / scale),
+    right: Math.round(rect.right / scale),
+    bottom: Math.round(rect.bottom / scale),
+  };
+}
+
+
+function drawWizardImageOnCanvas(canvas, imgSource, existingBoxInImageCoords) {
+  const naturalWidth = imgSource.naturalWidth || imgSource.width;
+  const naturalHeight = imgSource.naturalHeight || imgSource.height;
+  const scale = fitScale(naturalWidth, OCR_WIZARD_MAX_DISPLAY_WIDTH);
+  ocrWizardDisplayScale = scale;
+
+  canvas.width = naturalWidth * scale;
+  canvas.height = naturalHeight * scale;
+
+  ocrRectSelection = existingBoxInImageCoords ? {
+    left: existingBoxInImageCoords.left * scale,
+    top: existingBoxInImageCoords.top * scale,
+    right: existingBoxInImageCoords.right * scale,
+    bottom: existingBoxInImageCoords.bottom * scale,
+  } : null;
+  ocrFirstClickPoint = null; // a pending click from a previous step (e.g. left mid-selection via Skip/Back) must never carry over
+  ocrDragMode = null;
+  ocrDragCorner = null;
+  ocrDragStartMouse = null;
+  ocrDragStartRect = null;
+
+  setupCanvasRectSelector(canvas, imgSource);
+}
+
+function setupCanvasRectSelector(canvas, backgroundSource) {
+  const ctx = canvas.getContext("2d");
+
+  function drawDot(x, y) {
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = "#2563eb";
+    ctx.fill();
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 1.5;
+    ctx.stroke(); // white outline keeps the dot visible against any background color
+  }
+
+  function drawCornerDots() {
+    // All four corners are always blue — the box's own outline and live
+    // resizing already make clear which corner is currently being placed;
+    // a separate cursor-tracking dot isn't needed.
+    if (ocrRectSelection) {
+      getRectCorners(ocrRectSelection).forEach(c => drawDot(c.x, c.y));
+    }
+  }
+
+  function redraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(backgroundSource, 0, 0, canvas.width, canvas.height);
+    if (ocrRectSelection) {
+      const { left, top, right, bottom } = ocrRectSelection;
+      ctx.fillStyle = "rgba(37, 99, 235, 0.15)";
+      ctx.fillRect(left, top, right - left, bottom - top);
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(left, top, right - left, bottom - top);
+    }
+    drawCornerDots();
+  }
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(canvas.width, (e.clientX - rect.left) * (canvas.width / rect.width))),
+      y: Math.max(0, Math.min(canvas.height, (e.clientY - rect.top) * (canvas.height / rect.height))),
+    };
+  }
+
+  function updateCursorStyle(pos) {
+    if (ocrDragMode === "resizing") { canvas.style.cursor = ocrDragCorner ? ocrDragCorner.cursor : "crosshair"; return; }
+    if (ocrDragMode === "moving") { canvas.style.cursor = "grabbing"; return; }
+    if (ocrFirstClickPoint) { canvas.style.cursor = "crosshair"; return; } // actively placing the second corner
+    if (hasCompleteBox()) {
+      const corner = hitTestCorner(pos, ocrRectSelection);
+      if (corner) { canvas.style.cursor = corner.cursor; return; }
+      canvas.style.cursor = isInsideRect(pos, ocrRectSelection) ? "grab" : "default";
+      return;
+    }
+    canvas.style.cursor = "crosshair"; // nothing drawn yet — ready for the first click
+  }
+
+  canvas.onmousedown = (e) => {
+    const pos = getPos(e);
+
+    if (hasCompleteBox()) {
+      const corner = hitTestCorner(pos, ocrRectSelection);
+      if (corner) {
+        ocrDragMode = "resizing";
+        ocrDragCorner = corner;
+        updateCursorStyle(pos);
+        return;
+      }
+      if (isInsideRect(pos, ocrRectSelection)) {
+        ocrDragMode = "moving";
+        ocrDragStartMouse = pos;
+        ocrDragStartRect = { ...ocrRectSelection };
+        updateCursorStyle(pos);
+        return;
+      }
+      // Outside the existing box entirely — ignored; use Reset selection instead.
+      return;
+    }
+
+    if (!ocrFirstClickPoint) {
+      // First click: set one corner, start a zero-size box that will
+      // live-preview against the cursor on mousemove until the second click.
+      ocrFirstClickPoint = pos;
+      ocrRectSelection = { left: pos.x, top: pos.y, right: pos.x, bottom: pos.y };
+    } else {
+      // Second click: finalize the box using the first corner + this click.
+      ocrRectSelection = {
+        left: Math.min(ocrFirstClickPoint.x, pos.x),
+        top: Math.min(ocrFirstClickPoint.y, pos.y),
+        right: Math.max(ocrFirstClickPoint.x, pos.x),
+        bottom: Math.max(ocrFirstClickPoint.y, pos.y),
+      };
+      ocrFirstClickPoint = null;
+    }
+
+    redraw();
+    updateOcrMagnifier(canvas, pos, e.clientX, e.clientY);
+    updateOcrWizardNextEnabled();
+    updateCursorStyle(pos);
+  };
+  canvas.onmousemove = (e) => {
+    const pos = getPos(e);
+    // The magnifier and cursor icon only make sense while genuinely
+    // hovering the canvas — live tracking during an active interaction
+    // (second-corner placement, moving, resizing) is handled by the
+    // document-level listener below instead, so it keeps working smoothly
+    // even once the cursor drifts outside the canvas.
+    updateOcrMagnifier(canvas, pos, e.clientX, e.clientY);
+    if (!ocrFirstClickPoint && !ocrDragMode) updateCursorStyle(pos);
+  };
+  canvas.onmouseleave = () => {
+    hideOcrMagnifier();
+  };
+
+  // Document-level tracking, active only during an in-progress interaction
+  // (placing the second corner, or dragging to move/resize a completed
+  // box) — keeps things reaching as close as possible to the cursor even
+  // if it briefly moves off the canvas/image during a fast movement.
+  // Deliberately NOT applied while placing the FIRST corner or just
+  // hovering with nothing pinned yet.
+  if (ocrDocumentMouseMoveHandler) document.removeEventListener("mousemove", ocrDocumentMouseMoveHandler);
+  ocrDocumentMouseMoveHandler = (e) => {
+    const pos = getPos(e);
+    if (ocrFirstClickPoint) {
+      ocrRectSelection = {
+        left: Math.min(ocrFirstClickPoint.x, pos.x),
+        top: Math.min(ocrFirstClickPoint.y, pos.y),
+        right: Math.max(ocrFirstClickPoint.x, pos.x),
+        bottom: Math.max(ocrFirstClickPoint.y, pos.y),
+      };
+      redraw();
+    } else if (ocrDragMode === "resizing" && ocrDragCorner) {
+      ocrRectSelection = {
+        left: Math.min(pos.x, ocrDragCorner.fixedX),
+        top: Math.min(pos.y, ocrDragCorner.fixedY),
+        right: Math.max(pos.x, ocrDragCorner.fixedX),
+        bottom: Math.max(pos.y, ocrDragCorner.fixedY),
+      };
+      redraw();
+    } else if (ocrDragMode === "moving" && ocrDragStartRect && ocrDragStartMouse) {
+      const width = ocrDragStartRect.right - ocrDragStartRect.left;
+      const height = ocrDragStartRect.bottom - ocrDragStartRect.top;
+      let newLeft = ocrDragStartRect.left + (pos.x - ocrDragStartMouse.x);
+      let newTop = ocrDragStartRect.top + (pos.y - ocrDragStartMouse.y);
+      newLeft = Math.max(0, Math.min(canvas.width - width, newLeft));
+      newTop = Math.max(0, Math.min(canvas.height - height, newTop));
+      ocrRectSelection = { left: newLeft, top: newTop, right: newLeft + width, bottom: newTop + height };
+      redraw();
+    }
+  };
+  document.addEventListener("mousemove", ocrDocumentMouseMoveHandler);
+
+  if (ocrDocumentMouseUpHandler) document.removeEventListener("mouseup", ocrDocumentMouseUpHandler);
+  ocrDocumentMouseUpHandler = (e) => {
+    if (ocrDragMode) {
+      ocrDragMode = null;
+      ocrDragCorner = null;
+      ocrDragStartMouse = null;
+      ocrDragStartRect = null;
+      updateOcrWizardNextEnabled();
+      updateCursorStyle(getPos(e));
+    }
+  };
+  document.addEventListener("mouseup", ocrDocumentMouseUpHandler);
+
+  redraw();
+  canvas.style.cursor = hasCompleteBox() ? "grab" : "crosshair";
+}
+
+/**
+ * Floating zoomed-in view of the pixels around the cursor, shown while
+ * drawing crop boxes — small text (a two-digit temperature reading, a
+ * short location name) is easy to click a pixel or two off on a small
+ * canvas, and that's exactly the class of mistake this whole feature exists
+ * to prevent. Draws FROM the already-rendered main canvas (not the raw
+ * source image), so the magnifier also shows the in-progress selection
+ * rectangle, zoomed in — precise feedback on exactly where an edge lands.
+ */
+const OCR_MAGNIFIER_ZOOM = 4;
+let ocrMagnifierEnabled = true;
+
+document.getElementById("ocr-wizard-magnifier-toggle").addEventListener("change", (e) => {
+  ocrMagnifierEnabled = e.target.checked;
+  if (!ocrMagnifierEnabled) hideOcrMagnifier();
+});
+
+document.getElementById("ocr-wizard-reset-btn").addEventListener("click", () => {
+  const state = ocrWizardState;
+  if (!state) return;
+  // Only step 1 (the bar region) has a canvas selection to reset now.
+  if (state.step === 1) state.barBox = null;
+  renderOcrWizardStep();
+});
+
+function updateOcrMagnifier(canvas, pos, clientX, clientY) {
+  if (!ocrMagnifierEnabled) return;
+  const magCanvas = document.getElementById("ocr-wizard-magnifier");
+  const wrapEl = document.getElementById("ocr-wizard-canvas-wrap");
+  if (!magCanvas || !wrapEl) return;
+
+  // ---- draw the zoomed content ----
+  const magCtx = magCanvas.getContext("2d");
+  const sourceSize = magCanvas.width / OCR_MAGNIFIER_ZOOM;
+  const sourceX = Math.max(0, Math.min(canvas.width - sourceSize, pos.x - sourceSize / 2));
+  const sourceY = Math.max(0, Math.min(canvas.height - sourceSize, pos.y - sourceSize / 2));
+
+  magCtx.imageSmoothingEnabled = false; // keep zoomed pixels crisp/blocky, not blurred — easier to see exact edges
+  magCtx.clearRect(0, 0, magCanvas.width, magCanvas.height);
+  magCtx.drawImage(canvas, sourceX, sourceY, sourceSize, sourceSize, 0, 0, magCanvas.width, magCanvas.height);
+
+  // crosshair marking the exact cursor position within the zoomed view
+  magCtx.strokeStyle = "#dc2626";
+  magCtx.lineWidth = 1;
+  const cx = magCanvas.width / 2, cy = magCanvas.height / 2;
+  magCtx.beginPath();
+  magCtx.moveTo(cx - 8, cy); magCtx.lineTo(cx + 8, cy);
+  magCtx.moveTo(cx, cy - 8); magCtx.lineTo(cx, cy + 8);
+  magCtx.stroke();
+
+  // ---- follow the cursor, offset up-and-right so the cursor/hand doesn't
+  // block the view of what's being magnified, clamped so it never renders
+  // outside the wrap's own bounds at an edge ----
+  const wrapRect = wrapEl.getBoundingClientRect();
+  const OFFSET = 20;
+  let left = clientX - wrapRect.left + OFFSET;
+  let top = clientY - wrapRect.top - magCanvas.offsetHeight - OFFSET;
+  left = Math.max(0, Math.min(wrapEl.clientWidth - magCanvas.offsetWidth, left));
+  top = Math.max(0, Math.min(wrapEl.clientHeight - magCanvas.offsetHeight, top));
+  magCanvas.style.left = `${left}px`;
+  magCanvas.style.top = `${top}px`;
+
+  magCanvas.classList.add("visible");
+}
+
+function hideOcrMagnifier() {
+  const magCanvas = document.getElementById("ocr-wizard-magnifier");
+  if (magCanvas) magCanvas.classList.remove("visible");
+}
+
+function updateOcrWizardNextEnabled() {
+  const nextBtn = document.getElementById("ocr-wizard-next-btn");
+  const resetBtn = document.getElementById("ocr-wizard-reset-btn");
+  const state = ocrWizardState;
+  if (!state) return;
+  if (state.step === 1) {
+    nextBtn.disabled = !ocrRectSelection || rectIsTooSmall(ocrRectSelection);
+    resetBtn.disabled = !hasCompleteBox();
+  } else {
+    nextBtn.disabled = false;
+    resetBtn.disabled = true; // the review step has no canvas selection to reset
+  }
+}
+
+function renderOcrWizardStep() {
+  const state = ocrWizardState;
+  const canvas = document.getElementById("ocr-wizard-canvas");
+  const title = document.getElementById("ocr-wizard-title");
+  const instructions = document.getElementById("ocr-wizard-instructions");
+  const backBtn = document.getElementById("ocr-wizard-back-btn");
+  const nextBtn = document.getElementById("ocr-wizard-next-btn");
+  const confirmStep = document.getElementById("ocr-wizard-confirm-step");
+  const canvasWrap = document.getElementById("ocr-wizard-canvas-wrap");
+  const toolbar = document.querySelector(".ocr-wizard-toolbar");
+
+  nextBtn.textContent = "Next →";
+  confirmStep.classList.add("hidden");
+  canvasWrap.classList.remove("hidden");
+  if (toolbar) toolbar.classList.remove("hidden");
+
+  if (state.step === 1) {
+    title.textContent = "Configure OCR — Step 1 of 2";
+    instructions.textContent = "Click one corner of the ENTIRE information bar (date, time, location, etc. all together), then click the opposite corner.";
+    backBtn.textContent = "Cancel";
+    drawWizardImageOnCanvas(canvas, state.fullFrameImg, state.barBox);
+  } else if (state.step === 2) {
+    title.textContent = "Configure OCR — Step 2 of 2";
+    instructions.textContent = "Review what this region actually reads, then name and save this configuration.";
+    backBtn.textContent = "← Back";
+    nextBtn.textContent = "Save";
+    canvasWrap.classList.add("hidden");
+    if (toolbar) toolbar.classList.add("hidden"); // no drawing tools needed on the review step
+    confirmStep.classList.remove("hidden");
+    renderOcrWizardReview();
+  }
+
+  updateOcrWizardNextEnabled();
+}
+
+function buildCroppedCanvasForBarRegion(state) {
+  const box = state.barBox;
+  const cropped = document.createElement("canvas");
+  cropped.width = Math.max(1, box.right - box.left);
+  cropped.height = Math.max(1, box.bottom - box.top);
+  const ctx = cropped.getContext("2d");
+  ctx.drawImage(
+    state.fullFrameImg,
+    box.left, box.top, box.right - box.left, box.bottom - box.top,
+    0, 0, cropped.width, cropped.height
+  );
+  state.croppedCanvas = cropped;
+}
+
+async function renderOcrWizardReview() {
+  const container = document.getElementById("ocr-wizard-previews");
+  container.innerHTML = "";
+  const state = ocrWizardState;
+
+  // The bar-region crop itself, shown for visual reference alongside the readings.
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = state.croppedCanvas.width;
+  cropCanvas.height = state.croppedCanvas.height;
+  cropCanvas.className = "ocr-wizard-preview-canvas";
+  cropCanvas.getContext("2d").drawImage(state.croppedCanvas, 0, 0);
+  container.appendChild(cropCanvas);
+
+  const readingEls = {};
+  ["Date", "Time", "Temperature", "Location"].forEach(label => {
+    const row = document.createElement("div");
+    row.className = "ocr-wizard-preview-row";
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "ocr-wizard-preview-label";
+    labelEl.textContent = label + ":";
+    row.appendChild(labelEl);
+
+    const reading = document.createElement("span");
+    reading.className = "ocr-wizard-preview-reading muted";
+    reading.textContent = "Reading…";
+    row.appendChild(reading);
+    readingEls[label] = reading;
+
+    container.appendChild(row);
+  });
+
+  document.getElementById("ocr-wizard-config-name").value = "";
+
+  const toArray = (b) => b ? [b.left, b.top, b.right, b.bottom] : null;
+  try {
+    const res = await fetch("/api/ocr-wizard/preview-readings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        folder: state.folder,
+        bar_box: toArray(state.barBox),
+      }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      Object.values(readingEls).forEach(el => { el.textContent = "Couldn't read: " + data.error; });
+      return;
+    }
+    const setReading = (label, value) => {
+      const el = readingEls[label];
+      if (!el) return;
+      el.textContent = value ? `Reads: "${value}"` : "Not found in this reading";
+      el.classList.remove("muted");
+      el.classList.toggle("ocr-wizard-reading-blank", !value);
+    };
+    setReading("Date", data.date);
+    setReading("Time", data.time);
+    setReading("Temperature", data.temperature);
+    setReading("Location", data.location);
+  } catch (e) {
+    Object.values(readingEls).forEach(el => { el.textContent = "Couldn't fetch OCR reading"; });
+  }
+}
+
+document.getElementById("ocr-wizard-back-btn").addEventListener("click", () => {
+  const state = ocrWizardState;
+  if (!state) return;
+  if (state.step === 1) {
+    closeOcrWizard(true);
+    return;
+  }
+  state.step -= 1;
+  renderOcrWizardStep();
+});
+
+document.getElementById("ocr-wizard-next-btn").addEventListener("click", async () => {
+  const state = ocrWizardState;
+  if (!state) return;
+
+  if (state.step === 1) {
+    state.barBox = canvasRectToImageRect(ocrRectSelection, ocrWizardDisplayScale);
+    buildCroppedCanvasForBarRegion(state);
+    state.step += 1;
+    renderOcrWizardStep();
+    return;
+  }
+
+  if (state.step === 2) {
+    await saveOcrWizardConfig();
+  }
+});
+
+async function saveOcrWizardConfig() {
+  const name = document.getElementById("ocr-wizard-config-name").value.trim();
+  if (!name) {
+    alert("Please give this configuration a name.");
+    return;
+  }
+  const state = ocrWizardState;
+  const toArray = (box) => box ? [box.left, box.top, box.right, box.bottom] : null;
+
+  const res = await fetch("/api/ocr-configs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      bar_box: toArray(state.barBox),
+      // The sample frame's actual size — lets the backend scale this box
+      // correctly for any other video in a batch whose resolution differs.
+      ref_width: state.fullFrameImg.naturalWidth,
+      ref_height: state.fullFrameImg.naturalHeight,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+
+  closeOcrWizard(false);
+  await loadOcrConfigOptions();
+  document.getElementById("ocr-config-select").value = name;
+  ocrPreviousSelectValue = name;
+}
 
 // ---- Queue panel + live log (Upload tab) ----
 // The log box always shows whatever job is CURRENTLY RUNNING, not "the job
@@ -548,6 +1182,8 @@ document.getElementById("library-settings-btn").addEventListener("click", () => 
   document.getElementById("hidden-groups-input").value = "";
   document.getElementById("hidden-groups-autofill").classList.add("hidden");
   renderHiddenGroupsList();
+  renderOcrPresetsList();
+  updateSettingsTempUnitButtons();
 });
 
 function closeLibrarySettingsModal() {
@@ -661,6 +1297,72 @@ function renderHiddenGroupsList() {
     container.appendChild(chip);
   });
 }
+
+// ---- OCR presets management (Library Settings) ----
+async function renderOcrPresetsList() {
+  const container = document.getElementById("ocr-presets-list");
+  container.innerHTML = "";
+
+  const res = await fetch("/api/ocr-configs");
+  const data = await res.json();
+
+  if (data.configs.length === 0) {
+    const emptyMsg = document.createElement("div");
+    emptyMsg.className = "muted";
+    emptyMsg.textContent = "No saved OCR presets yet.";
+    container.appendChild(emptyMsg);
+    return;
+  }
+
+  data.configs.forEach(name => {
+    const row = document.createElement("div");
+    row.className = "ocr-preset-row";
+
+    const label = document.createElement("span");
+    label.className = "ocr-preset-name";
+    label.textContent = name;
+    row.appendChild(label);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "ocr-preset-remove-btn";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", async () => {
+      const ok = confirm(`Remove the OCR preset "${name}"? This can't be undone.`);
+      if (!ok) return;
+      const delRes = await fetch(`/api/ocr-configs/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const delData = await delRes.json();
+      if (delData.error) {
+        alert(delData.error);
+        return;
+      }
+      renderOcrPresetsList();
+      loadOcrConfigOptions(); // refresh the Upload tab dropdown too — it may have had this preset selected
+    });
+    row.appendChild(removeBtn);
+
+    container.appendChild(row);
+  });
+}
+
+// ---- Temperature unit (Library Settings) ----
+// Shares the exact same state/localStorage key as the Spreadsheet tab's
+// clickable "Temperature (F/C)" header — either control changes it, both
+// stay in sync.
+function setTemperatureUnit(unit) {
+  temperatureDisplayUnit = unit;
+  localStorage.setItem("temperatureDisplayUnit", unit);
+  document.getElementById("temp-unit-label").textContent = unit;
+  updateSettingsTempUnitButtons();
+  applySpreadsheetView(); // re-render immediately if the Spreadsheet is already loaded
+}
+
+function updateSettingsTempUnitButtons() {
+  document.getElementById("settings-temp-f-btn").classList.toggle("active", temperatureDisplayUnit === "F");
+  document.getElementById("settings-temp-c-btn").classList.toggle("active", temperatureDisplayUnit === "C");
+}
+
+document.getElementById("settings-temp-f-btn").addEventListener("click", () => setTemperatureUnit("F"));
+document.getElementById("settings-temp-c-btn").addEventListener("click", () => setTemperatureUnit("C"));
 
 function openLibraryGroup(label) {
   libraryActiveSpecies = label;
@@ -917,6 +1619,7 @@ function renderModalList(query) {
 if (document.getElementById("tab-upload").classList.contains("active")) {
   pollQueue();
   loadUploadHistory();
+  loadOcrConfigOptions();
 }
 refreshSpeciesData(); // populates the Library tab's unreviewed-count badge immediately, not just after visiting the tab
 
@@ -930,10 +1633,7 @@ let temperatureDisplayUnit = localStorage.getItem("temperatureDisplayUnit") || "
 document.getElementById("temp-unit-label").textContent = temperatureDisplayUnit;
 
 document.getElementById("temperature-header").addEventListener("click", () => {
-  temperatureDisplayUnit = temperatureDisplayUnit === "F" ? "C" : "F";
-  localStorage.setItem("temperatureDisplayUnit", temperatureDisplayUnit);
-  document.getElementById("temp-unit-label").textContent = temperatureDisplayUnit;
-  applySpreadsheetView(); // re-render so every row's temperature recalculates in the new unit
+  setTemperatureUnit(temperatureDisplayUnit === "F" ? "C" : "F");
 });
 
 /**
@@ -945,12 +1645,37 @@ document.getElementById("temperature-header").addEventListener("click", () => {
  */
 function parseTemperatureReading(raw) {
   if (!raw) return null;
-  const match = String(raw).match(/(-?\d+(?:\.\d+)?)\s*°?\s*([CF])?/i);
-  if (!match) return null;
-  const value = parseFloat(match[1]);
-  if (isNaN(value)) return null;
-  const unit = (match[2] || "F").toUpperCase();
-  return { value, unit };
+  const text = String(raw).trim();
+
+  // Dual-unit format, e.g. "24C/75F" — many trail cams show both units
+  // natively. Reading whichever one matches the display unit directly is
+  // more accurate than converting one to the other (no rounding drift).
+  const dualMatch = text.match(/^(-?\d+(?:\.\d+)?)\s*°?\s*C\s*\/\s*(-?\d+(?:\.\d+)?)\s*°?\s*F$/i);
+  if (dualMatch) {
+    return { c: parseFloat(dualMatch[1]), f: parseFloat(dualMatch[2]) };
+  }
+
+  // Single-unit format, e.g. "72F" or "68°F" or "20C" — anchored to match
+  // the ENTIRE string, not just a substring. This is what actually catches
+  // a garbled OCR read like "24C75F" (a dual-unit reading with a dropped
+  // "/" separator): the old substring-matching regex would silently latch
+  // onto "24C" and discard "75F", reporting a plausible-looking but wrong
+  // value instead of admitting it couldn't be read cleanly.
+  const singleMatch = text.match(/^(-?\d+(?:\.\d+)?)\s*°?\s*([CF])$/i);
+  if (singleMatch) {
+    const value = parseFloat(singleMatch[1]);
+    const unit = singleMatch[2].toUpperCase();
+    return unit === "C" ? { c: value, f: null } : { c: null, f: value };
+  }
+
+  // Bare number, no unit letter at all (a partial OCR read can drop it) —
+  // assume Fahrenheit, the common default for US trail cams.
+  const bareMatch = text.match(/^(-?\d+(?:\.\d+)?)$/);
+  if (bareMatch) {
+    return { c: null, f: parseFloat(bareMatch[1]) };
+  }
+
+  return null; // genuinely unparseable — never guessed at
 }
 
 function convertTemperature(value, fromUnit, toUnit) {
@@ -962,10 +1687,17 @@ function convertTemperature(value, fromUnit, toUnit) {
 
 /** Converts a raw stored reading to whatever unit is currently toggled on, for display. */
 function formatTemperatureForDisplay(raw, displayUnit) {
+  if (!raw) return ""; // genuinely blank/skipped — not an error, just no data
   const parsed = parseTemperatureReading(raw);
-  if (!parsed) return raw || ""; // blank or unparseable — show as-is rather than guessing
-  const converted = convertTemperature(parsed.value, parsed.unit, displayUnit);
-  return `${Math.round(converted)}°${displayUnit}`;
+  if (!parsed) return "Error"; // unparseable — never silently show the raw garbled text or a coincidental 0
+  if (displayUnit === "C") {
+    if (parsed.c !== null) return `${Math.round(parsed.c)}°C`;
+    if (parsed.f !== null) return `${Math.round(convertTemperature(parsed.f, "F", "C"))}°C`;
+  } else {
+    if (parsed.f !== null) return `${Math.round(parsed.f)}°F`;
+    if (parsed.c !== null) return `${Math.round(convertTemperature(parsed.c, "C", "F"))}°F`;
+  }
+  return "Error"; // defensive fallback — should be unreachable, but never defaults to a bare 0
 }
 
 function stripExtension(name) {
