@@ -54,6 +54,14 @@ SKIP_OCR_VALUE = "__skip_ocr__"
 CONFIGURE_NEW_VALUE = "__configure_new__"
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".wmv"}
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+
+
+def media_type_for_filename(filename):
+    """"photo" or "video" based on file extension — defaults to "video" for
+    anything unrecognized, matching this system's original video-only
+    behavior for any file type not explicitly known as a photo."""
+    return "photo" if Path(filename).suffix.lower() in PHOTO_EXTENSIONS else "video"
 
 # ---------------------------------------------------------------------------
 # In-memory state, each mirrored to its own JSON file so everything survives
@@ -165,7 +173,7 @@ _NEW_FIELD_DEFAULTS = {
     "date": None, "time": None, "location": None, "diel_period": None,
     "temperature": None,
     "count": 1, "notes": "", "display_filename": None, "metadata_edited": False,
-    "has_bar_crop": False,
+    "has_bar_crop": False, "media_type": "video",
 }
 for _v in videos.values():
     for _key, _default in _NEW_FIELD_DEFAULTS.items():
@@ -418,6 +426,7 @@ def sync_videos_from_job(job_id):
                 "job_id": job_id,
                 "folder": job["folder"],
                 "filename": filename,
+                "media_type": media_type_for_filename(filename),
                 "ai_species": ai_species,          # None means blank
                 "ai_classifier_conf": round(ai_conf, 2) if ai_conf is not None else None,
                 "ai_detector_conf": round(ai_det_conf, 2) if ai_det_conf is not None else None,
@@ -684,39 +693,60 @@ def delete_ocr_config(name):
     return jsonify({"deleted": name})
 
 
-def find_first_video_in_folder(folder):
+def list_media_candidates_in_folder(folder):
     folder_path = Path(folder)
-    candidates = sorted(
+    return sorted(
         p for p in folder_path.iterdir()
-        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+        if p.is_file() and p.suffix.lower() in (VIDEO_EXTENSIONS | PHOTO_EXTENSIONS)
     )
-    return candidates[0] if candidates else None
 
 
 @app.route("/api/ocr-wizard/first-frame")
 def ocr_wizard_first_frame():
     """
-    Returns the first frame of the first video (alphabetically) in the given
-    folder as a PNG image — the sample frame the OCR-config wizard shows for
-    drawing crop boxes on.
+    Returns a sample frame for the OCR-config wizard to draw crop boxes on.
+    Tries each photo/video in the folder in order (alphabetically) until one
+    actually produces a readable frame — a single corrupted file (often the
+    very first one, alphabetically) shouldn't block calibration entirely.
+    Which file ended up being used is reported via the X-Sample-Filename
+    response header, so the review step can be pointed at that EXACT same
+    file rather than independently re-picking "the first file" again (which
+    could pick a different, unrelated file if the true first one failed
+    here but the folder's contents changed, or just for consistency).
     """
     folder = request.args.get("folder", "")
     if not folder or not Path(folder).is_dir():
         return jsonify({"error": "Folder not found"}), 400
 
-    video_path = find_first_video_in_folder(folder)
-    if not video_path:
-        return jsonify({"error": "No video files found in this folder"}), 400
+    candidates = list_media_candidates_in_folder(folder)
+    if not candidates:
+        return jsonify({"error": "No photo or video files found in this folder"}), 400
 
-    try:
-        frame = bar_ocr.extract_first_frame(video_path)
-    except Exception as e:
-        return jsonify({"error": f"Could not read a frame from {video_path.name}: {e}"}), 500
+    frame = None
+    used_path = None
+    last_error = None
+    for candidate in candidates:
+        try:
+            frame = bar_ocr.extract_first_frame(candidate)
+            used_path = candidate
+            break
+        except Exception as e:
+            last_error = e
+            continue
+
+    if frame is None:
+        return jsonify({
+            "error": f"Could not read a usable frame from any of the {len(candidates)} file(s) in this folder "
+                     f"(last error: {last_error})"
+        }), 500
 
     ok, encoded = cv2.imencode(".png", frame)
     if not ok:
         return jsonify({"error": "Failed to encode the frame as an image"}), 500
-    return Response(encoded.tobytes(), mimetype="image/png")
+
+    response = Response(encoded.tobytes(), mimetype="image/png")
+    response.headers["X-Sample-Filename"] = used_path.name
+    return response
 
 
 @app.route("/api/ocr-wizard/preview-readings", methods=["POST"])
@@ -728,24 +758,39 @@ def ocr_wizard_preview_readings():
     frame. Lets the wizard show "here's what this region actually reads"
     before saving, so a misaligned or too-tight bar box is obvious
     immediately instead of discovered days later across a whole batch.
+
+    Expects the EXACT filename the first-frame endpoint actually used (see
+    its X-Sample-Filename header) — falls back to re-picking the first
+    readable candidate only if the caller doesn't provide one, but that
+    fallback risks landing on a DIFFERENT file than whatever the bar region
+    was actually drawn against if the true first file is unreadable.
     """
     data = request.get_json(force=True)
     folder = data.get("folder", "")
     if not folder or not Path(folder).is_dir():
         return jsonify({"error": "Folder not found"}), 400
 
-    video_path = find_first_video_in_folder(folder)
-    if not video_path:
-        return jsonify({"error": "No video files found in this folder"}), 400
+    filename = data.get("filename")
+    if filename:
+        if "/" in filename or "\\" in filename or ".." in filename:
+            return jsonify({"error": "Invalid filename"}), 400
+        media_path = Path(folder) / filename
+        if not media_path.is_file():
+            return jsonify({"error": f"{filename} no longer exists in this folder"}), 400
+    else:
+        candidates = list_media_candidates_in_folder(folder)
+        if not candidates:
+            return jsonify({"error": "No photo or video files found in this folder"}), 400
+        media_path = candidates[0]
 
     bar_box = data.get("bar_box")
     if not bar_box or not (isinstance(bar_box, list) and len(bar_box) == 4):
         return jsonify({"error": "No bar region provided"}), 400
 
     try:
-        frame = bar_ocr.extract_first_frame(video_path)
+        frame = bar_ocr.extract_first_frame(media_path)
     except Exception as e:
-        return jsonify({"error": f"Could not read a frame from {video_path.name}: {e}"}), 500
+        return jsonify({"error": f"Could not read a frame from {media_path.name}: {e}"}), 500
 
     try:
         box = tuple(int(round(x)) for x in bar_box)

@@ -86,7 +86,8 @@
 
     <div id="review-content" class="review-layout hidden">
       <div class="review-video-pane">
-        <video id="review-video-player" controls preload="metadata"></video>
+        <video id="review-video-player" controls preload="metadata" class="hidden"></video>
+        <img id="review-photo-player" class="hidden" alt="">
         <img id="review-bar-crop-img" class="bar-crop-inline-img hidden" alt="Cropped info bar">
         <div class="review-nav-buttons">
           <button id="review-prev-btn" class="review-nav-btn">← Previous</button>
@@ -199,7 +200,14 @@
 <template id="video-card-template">
   <div class="video-card">
     <span class="unreviewed-corner-bubble hidden" title="Not yet reviewed">!</span>
-    <video controls preload="metadata"></video>
+    <button class="card-zoom-btn hidden" title="View larger">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
+        <circle cx="10" cy="10" r="7"></circle>
+        <line x1="21" y1="21" x2="15.5" y2="15.5"></line>
+      </svg>
+    </button>
+    <video controls preload="metadata" class="hidden"></video>
+    <img class="card-photo hidden" alt="">
     <div class="video-card-body">
       <div class="video-filename"></div>
       <div class="video-tag-row">
@@ -241,7 +249,7 @@
      rendered as a fixed-position overlay so it's never clipped by the
      table's own layout/scrolling. -->
 <div id="row-context-menu" class="row-context-menu hidden">
-  <button id="ctx-show-video-btn">Show video</button>
+  <button id="ctx-show-video-btn">Show media</button>
   <button id="ctx-favorite-btn">☆ Favorite</button>
   <button id="ctx-copy-btn">Copy row</button>
   <button id="ctx-copy-all-btn">Copy entire table</button>
@@ -315,7 +323,8 @@
 <div id="video-modal" class="modal-overlay hidden">
   <div class="video-modal-box">
     <button id="video-modal-close-btn" class="modal-close video-modal-close">✕</button>
-    <video id="video-modal-player" controls></video>
+    <video id="video-modal-player" controls class="hidden"></video>
+    <img id="video-modal-photo" class="hidden" alt="">
   </div>
 </div>
 

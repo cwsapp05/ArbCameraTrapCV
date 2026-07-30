@@ -315,6 +315,14 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   display: block;
 }
 
+.video-card .card-photo {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: black;
+  display: block;
+}
+
 .video-card-body { padding: 0.7rem 0.8rem; }
 
 .video-filename {
@@ -428,6 +436,24 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   box-shadow: 0 1px 4px rgba(0,0,0,0.35);
 }
 
+.card-zoom-btn {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 5;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.45);
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+.card-zoom-btn:hover { background: rgba(0, 0, 0, 0.65); }
+
 .favorite-btn {
   background: none;
   border: none;
@@ -489,6 +515,13 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 
 .review-video-pane video {
+  width: 100%;
+  border-radius: 8px;
+  background: black;
+  display: block;
+}
+
+.review-video-pane #review-photo-player {
   width: 100%;
   border-radius: 8px;
   background: black;
@@ -827,6 +860,62 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Small media-type icon prefix on the File Name cell — rendered via
+   ::before (not a real child node) so it doesn't pollute td.textContent,
+   which copy/edit operations read directly. Gives the Media Type sort a
+   visible, verifiable effect in the spreadsheet itself. */
+.spreadsheet td.filename-photo,
+.spreadsheet td.filename-video {
+  position: relative; /* anchors the tooltip below */
+  overflow: visible;   /* .spreadsheet td sets overflow:hidden for text
+                          truncation, which would otherwise clip this cell's
+                          tooltip since it renders above the cell's own box.
+                          The .filename-cell-text span below handles the
+                          actual text truncation instead, so this doesn't
+                          let the filename itself spill into other columns. */
+}
+
+/* The icon lives on the INNER SPAN (not the td) so it sits inline with the
+   filename text inside the same truncating block box — text-overflow:
+   ellipsis then applies to icon+text together, clipping the end (the
+   filename) while keeping the icon visible at the start. */
+.filename-cell-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spreadsheet td.filename-photo .filename-cell-text::before { content: "📷 "; }
+.spreadsheet td.filename-video .filename-cell-text::before { content: "🎥 "; }
+
+/* Tooltip showing the file's actual extension on hover — attr(data-tooltip)
+   instead of a real nested element so it can't interfere with
+   td.textContent. */
+.spreadsheet td.filename-photo::after,
+.spreadsheet td.filename-video::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0.5rem;
+  background: #1f2328;
+  color: white;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s;
+  pointer-events: none;
+  z-index: 20;
+}
+.spreadsheet td.filename-photo:hover::after,
+.spreadsheet td.filename-video:hover::after {
+  opacity: 1;
+  visibility: visible;
 }
 
 /* Tooltip box, matching .verified-info-tooltip's look exactly (dark

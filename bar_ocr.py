@@ -60,12 +60,28 @@ ARBORETUM_LAT = 0.0   # TODO: fill in the Arboretum's coordinates
 ARBORETUM_LON = 0.0   # TODO: fill in the Arboretum's coordinates
 
 
-def extract_first_frame(video_path):
-    cap = cv2.VideoCapture(str(video_path))
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+
+
+def extract_first_frame(media_path):
+    """
+    Returns the frame to run OCR/QA-cropping against. For a video, this is
+    the actual first frame (decoded via VideoCapture); for a photo, the
+    file already IS a single frame, so it's just read directly — no video
+    decoding involved.
+    """
+    path = Path(media_path)
+    if path.suffix.lower() in PHOTO_EXTENSIONS:
+        frame = cv2.imread(str(path))
+        if frame is None:
+            raise RuntimeError(f"Could not read image {media_path}")
+        return frame
+
+    cap = cv2.VideoCapture(str(media_path))
     ok, frame = cap.read()
     cap.release()
     if not ok:
-        raise RuntimeError(f"Could not read a frame from {video_path}")
+        raise RuntimeError(f"Could not read a frame from {media_path}")
     return frame
 
 

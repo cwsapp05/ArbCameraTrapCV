@@ -202,6 +202,8 @@ function openOcrConfigWizard(folder) {
     fullFrameImg: null,
     barBox: null,
     croppedCanvas: null,
+    sampleFilename: null, // which file the sample frame actually came from (backend may skip corrupted files)
+    sampleObjectUrl: null,
   };
   document.getElementById("ocr-wizard-modal").classList.remove("hidden");
   loadOcrWizardFrame();
@@ -209,6 +211,9 @@ function openOcrConfigWizard(folder) {
 
 function closeOcrWizard(restoreSelect) {
   document.getElementById("ocr-wizard-modal").classList.add("hidden");
+  if (ocrWizardState && ocrWizardState.sampleObjectUrl) {
+    URL.revokeObjectURL(ocrWizardState.sampleObjectUrl);
+  }
   ocrWizardState = null;
   ocrRectSelection = null;
   ocrFirstClickPoint = null;
@@ -235,16 +240,41 @@ document.getElementById("ocr-wizard-modal").addEventListener("click", (e) => {
 });
 
 async function loadOcrWizardFrame() {
-  const img = new Image();
-  img.onload = () => {
-    ocrWizardState.fullFrameImg = img;
-    renderOcrWizardStep();
-  };
-  img.onerror = () => {
-    alert("Could not load a preview frame from this folder — make sure it contains a readable video file.");
+  const state = ocrWizardState;
+  try {
+    const res = await fetch(`/api/ocr-wizard/first-frame?folder=${encodeURIComponent(state.folder)}&t=${Date.now()}`);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      alert(errData.error || "Could not load a preview frame from this folder.");
+      closeOcrWizard(true);
+      return;
+    }
+
+    // Remember exactly which file the backend actually used (it tries each
+    // file in the folder until one is genuinely readable, skipping any
+    // corrupted ones) — the review step needs to OCR this SAME file, not
+    // independently re-derive "the first file" and risk landing on a
+    // different one.
+    state.sampleFilename = res.headers.get("X-Sample-Filename");
+
+    const blob = await res.blob();
+    if (state.sampleObjectUrl) URL.revokeObjectURL(state.sampleObjectUrl);
+    state.sampleObjectUrl = URL.createObjectURL(blob);
+
+    const img = new Image();
+    img.onload = () => {
+      state.fullFrameImg = img;
+      renderOcrWizardStep();
+    };
+    img.onerror = () => {
+      alert("Could not load the preview frame image.");
+      closeOcrWizard(true);
+    };
+    img.src = state.sampleObjectUrl;
+  } catch (e) {
+    alert("Could not load a preview frame from this folder — make sure it contains a readable photo or video file.");
     closeOcrWizard(true);
-  };
-  img.src = `/api/ocr-wizard/first-frame?folder=${encodeURIComponent(ocrWizardState.folder)}&t=${Date.now()}`;
+  }
 }
 
 function fitScale(naturalWidth, maxWidth) {
@@ -641,6 +671,7 @@ async function renderOcrWizardReview() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         folder: state.folder,
+        filename: state.sampleFilename,
         bar_box: toArray(state.barBox),
       }),
     });
@@ -920,8 +951,20 @@ function renderReviewCard() {
   progress.textContent = `Reviewing ${reviewIndex + 1} of ${reviewQueue.length}`;
 
   const player = document.getElementById("review-video-player");
-  player.src = `/media/${v.id}`;
-  player.play().catch(() => {}); // browser may block autoplay — not an error, just ignore
+  const photoPlayer = document.getElementById("review-photo-player");
+  if (v.media_type === "photo") {
+    photoPlayer.src = `/media/${v.id}`;
+    photoPlayer.classList.remove("hidden");
+    player.classList.add("hidden");
+    player.pause();
+    player.removeAttribute("src");
+  } else {
+    player.src = `/media/${v.id}`;
+    player.classList.remove("hidden");
+    photoPlayer.classList.add("hidden");
+    photoPlayer.removeAttribute("src");
+    player.play().catch(() => {}); // browser may block autoplay — not an error, just ignore
+  }
 
   const cropImg = document.getElementById("review-bar-crop-img");
   if (v.has_bar_crop) {
@@ -1416,7 +1459,25 @@ function renderGrid(videos, gridId, emptyId) {
     const card = template.content.cloneNode(true);
 
     const videoEl = card.querySelector("video");
-    videoEl.src = "/media/" + v.id;
+    const photoEl = card.querySelector(".card-photo");
+    if (v.media_type === "photo") {
+      photoEl.src = "/media/" + v.id;
+      photoEl.classList.remove("hidden");
+      videoEl.classList.add("hidden");
+    } else {
+      videoEl.src = "/media/" + v.id;
+      videoEl.classList.remove("hidden");
+      photoEl.classList.add("hidden");
+    }
+
+    const zoomBtn = card.querySelector(".card-zoom-btn");
+    if (v.media_type === "photo") {
+      zoomBtn.classList.remove("hidden");
+      zoomBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        showVideoModal(v.id, "photo");
+      });
+    }
 
     card.querySelector(".video-filename").textContent = v.filename;
     card.querySelector(".video-filename").title = v.filename;
@@ -1705,6 +1766,11 @@ function stripExtension(name) {
   return idx > 0 ? name.slice(0, idx) : name;
 }
 
+function fileExtensionOf(name) {
+  const idx = name.lastIndexOf(".");
+  return idx > 0 ? name.slice(idx).toLowerCase() : "";
+}
+
 let spreadsheetVideos = [];        // raw data from the last /api/videos fetch
 let spreadsheetSearch = "";
 let spreadsheetSorts = [];         // stacked sort levels: [{field, dir}, ...] — applied in order, each a tie-break for the previous
@@ -1720,6 +1786,8 @@ const SORT_FIELD_LABELS = {
   diel_period: "Diel Period",
   temperature: "Temperature",
   verified: "Verified",
+  media_type: "Media Type",
+  missing_count: "Data Complete",
 };
 
 function spreadsheetRowValues(v) {
@@ -1734,6 +1802,13 @@ function spreadsheetRowValues(v) {
     diel_period: v.diel_period || "",
     temperature: formatTemperatureForDisplay(v.temperature, temperatureDisplayUnit),
     verified: v.corrected_species ? 1 : 0, // sort-only field, not a visible column — 0 (unverified) sorts before 1 (verified) ascending
+    media_type: v.media_type || "video", // sort-only field — "photo" sorts before "video" alphabetically ascending
+    // Sort-only field: how many of the OCR-derived fields are missing for
+    // this entry (0-5). Species/Count/Notes/File Name are excluded — they
+    // always have SOME value (an AI guess, a default of 1, etc.), so
+    // "missing" only meaningfully applies to what OCR can genuinely fail
+    // to read or that was deliberately skipped.
+    missing_count: ["date", "time", "location", "diel_period", "temperature"].filter(f => !v[f]).length,
   };
 }
 
@@ -1773,7 +1848,7 @@ function applySpreadsheetView() {
         if (bEmpty) return -1;
 
         let cmp;
-        if (level.field === "count" || level.field === "verified") {
+        if (level.field === "count" || level.field === "verified" || level.field === "missing_count") {
           cmp = Number(av) - Number(bv);
         } else if (level.field === "temperature") {
           // Temperature is free-text OCR output like "72F" or "68°F", not a
@@ -1932,6 +2007,31 @@ function renderSpreadsheet(videos) {
         // copyRowToClipboard/copyEntireTableToClipboard/startCellEdit all
         // read directly.
         td.dataset.tooltip = v.corrected_species ? "Verified by: Connor Sapp" : "Unverified";
+      }
+
+      if (field === "filename") {
+        // The icon lives on an inner span (not a real text node itself —
+        // it's a CSS ::before on that span) so it doesn't pollute
+        // td.textContent — same reasoning as the species tooltip above.
+        // Gives the Media Type sort a visible, verifiable effect. Tooltip
+        // (::after on the td, see CSS) shows the actual file extension on
+        // hover — derived from v.filename (the real file on disk), not
+        // display_filename, since that's user-editable and may not
+        // reliably reflect the true file type.
+        //
+        // Text truncation happens on this inner span, not the td itself —
+        // the td needs overflow:visible so its tooltip can escape the
+        // cell's box (same reasoning as the species cell above); wrapping
+        // the text lets it truncate independently instead of spilling into
+        // neighboring columns.
+        td.classList.add(v.media_type === "photo" ? "filename-photo" : "filename-video");
+        td.dataset.tooltip = fileExtensionOf(v.filename) || (v.media_type === "photo" ? "photo" : "video");
+
+        const textSpan = document.createElement("span");
+        textSpan.className = "filename-cell-text";
+        textSpan.textContent = td.textContent;
+        td.textContent = "";
+        td.appendChild(textSpan);
       }
 
       td.addEventListener("click", () => startCellEdit(td, v.id));
@@ -2243,20 +2343,42 @@ document.getElementById("ctx-show-video-btn").addEventListener("click", (e) => {
   if (videoId) showVideoModal(videoId);
 });
 
-function showVideoModal(videoId) {
+function showVideoModal(videoId, mediaType) {
   const modal = document.getElementById("video-modal");
   const player = document.getElementById("video-modal-player");
-  player.src = "/media/" + videoId;
+  const photo = document.getElementById("video-modal-photo");
+
+  if (!mediaType) {
+    // Fallback for callers that don't already know it (the Spreadsheet's
+    // own "Show media" menu option) — looks it up from its cache. Callers
+    // that already have the record (Library/Favorites cards) should pass
+    // mediaType directly instead, since spreadsheetVideos may be empty if
+    // that tab hasn't been visited yet.
+    const record = spreadsheetVideos.find(v => v.id === videoId);
+    mediaType = record ? record.media_type : "video";
+  }
+
+  if (mediaType === "photo") {
+    photo.src = "/media/" + videoId;
+    photo.classList.remove("hidden");
+    player.classList.add("hidden");
+  } else {
+    player.src = "/media/" + videoId;
+    player.classList.remove("hidden");
+    photo.classList.add("hidden");
+    player.play().catch(() => {}); // browser may block autoplay — not an error, just ignore
+  }
   modal.classList.remove("hidden");
-  player.play().catch(() => {}); // browser may block autoplay — not an error, just ignore
 }
 
 function closeVideoModal() {
   const modal = document.getElementById("video-modal");
   const player = document.getElementById("video-modal-player");
+  const photo = document.getElementById("video-modal-photo");
   player.pause();
   player.removeAttribute("src");
   player.load(); // fully releases the video, stops any buffering/playback
+  photo.removeAttribute("src");
   modal.classList.add("hidden");
 }
 
