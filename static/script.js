@@ -19,6 +19,12 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
       await saveCurrentReviewFields(); // don't lose pending edits when navigating away
     }
 
+    // Stop any video playing anywhere (a Library/Favorites card, the
+    // Review tab's player, the Spreadsheet's popup) so switching tabs
+    // never leaves something quietly playing in the background.
+    document.querySelectorAll("video").forEach(v => v.pause());
+    currentlyPlayingVideo = null;
+
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
     btn.classList.add("active");
