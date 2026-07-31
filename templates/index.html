@@ -220,6 +220,7 @@
         </div>
         <div class="card-actions">
           <button class="favorite-btn" title="Favorite">☆</button>
+          <button class="notes-btn" title="Count / Notes">📝</button>
           <button class="delete-btn" title="Delete from library">🗑️</button>
         </div>
       </div>
@@ -227,6 +228,23 @@
         <select class="correction-select"></select>
         <button class="save-correction-btn">Save</button>
       </div>
+    </div>
+  </div>
+</template>
+
+<!-- Card info panel: appears next to an expanded card (see .notes-btn),
+     holding the Count/Notes fields, matching that card's stretched height
+     via CSS Grid's default row-stretching behavior. -->
+<template id="card-info-panel-template">
+  <div class="card-info-panel">
+    <button class="card-info-close-btn" title="Close">✕</button>
+    <div class="card-info-field">
+      <label>Count</label>
+      <input type="number" class="card-info-count" min="0">
+    </div>
+    <div class="card-info-field card-info-field-notes">
+      <label>Notes</label>
+      <textarea class="card-info-notes"></textarea>
     </div>
   </div>
 </template>

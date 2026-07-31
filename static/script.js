@@ -1443,6 +1443,74 @@ async function loadFavorites() {
   renderGrid(vids, "fav-grid", "fav-empty");
 }
 
+let expandedCardByGrid = { "lib-grid": null, "fav-grid": null };
+
+// Only one video across the whole Library/Favorites grid plays at a time —
+// starting any one of them (native controls OR the notes-button's
+// autoplay) pauses whichever other one was playing, so you never get
+// overlapping audio from multiple cards.
+let currentlyPlayingVideo = null;
+
+function handleGridVideoPlay(e) {
+  const videoEl = e.target;
+  if (currentlyPlayingVideo && currentlyPlayingVideo !== videoEl) {
+    currentlyPlayingVideo.pause();
+  }
+  currentlyPlayingVideo = videoEl;
+}
+
+function playExclusively(videoEl) {
+  videoEl.play().catch(() => {}); // browser may block autoplay — not an error, just ignore
+}
+
+function toggleVideoPlayPauseOnClick(e) {
+  const videoEl = e.currentTarget;
+  if (videoEl.paused) {
+    playExclusively(videoEl);
+  } else {
+    videoEl.pause();
+  }
+}
+
+function scrollCardNearTop(cardEl, gridEl) {
+  // Leaves a small gap above the card instead of jamming it flush against
+  // the viewport's very top edge — matches the grid's own row gap so it
+  // reads as "one card-spacing" rather than an arbitrary offset.
+  const gapPx = parseFloat(getComputedStyle(gridEl).rowGap) || 16;
+  const targetY = window.scrollY + cardEl.getBoundingClientRect().top - gapPx;
+  window.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
+}
+
+function toggleCardInfoPanel(videoId, gridId, cardEl, v) {
+  const currentlyExpanded = expandedCardByGrid[gridId];
+
+  if (currentlyExpanded === videoId) {
+    // Re-clicking the currently-expanded card's own button — a genuine
+    // close, same treatment as the X button.
+    expandedCardByGrid[gridId] = null;
+    collapseCardInfoPanel(gridId, true);
+    return;
+  }
+
+  // Switching to a different card — collapse the previous one WITHOUT the
+  // "just closed" treatment. The user's intent here is to see the NEW
+  // card, not be shown where the old one went.
+  collapseCardInfoPanel(gridId, false);
+
+  expandedCardByGrid[gridId] = videoId;
+  const wrapper = expandCardInfoPanel(videoId, gridId, cardEl, v);
+  wrapper.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  // Autoplay only happens here (the genuine click path) — expandCardInfoPanel
+  // is ALSO called when a background re-render re-applies a persisted
+  // expansion (see renderGrid), where restarting the video from the
+  // beginning would be an annoying side effect rather than a user action.
+  if (v.media_type !== "photo") {
+    const videoEl = cardEl.querySelector("video");
+    if (videoEl) playExclusively(videoEl);
+  }
+}
+
 function renderGrid(videos, gridId, emptyId) {
   const grid = document.getElementById(gridId);
   const empty = document.getElementById(emptyId);
@@ -1459,6 +1527,7 @@ function renderGrid(videos, gridId, emptyId) {
     const card = template.content.cloneNode(true);
 
     const videoEl = card.querySelector("video");
+    videoEl.addEventListener("play", handleGridVideoPlay);
     const photoEl = card.querySelector(".card-photo");
     if (v.media_type === "photo") {
       photoEl.src = "/media/" + v.id;
@@ -1502,6 +1571,14 @@ function renderGrid(videos, gridId, emptyId) {
       toggleFavorite(v.id, !v.favorited, whichTab)
     );
 
+    const notesBtn = card.querySelector(".notes-btn");
+    notesBtn.dataset.videoId = v.id;
+    notesBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const cardEl = e.currentTarget.closest(".video-card");
+      toggleCardInfoPanel(v.id, gridId, cardEl, v);
+    });
+
     const deleteBtn = card.querySelector(".delete-btn");
     deleteBtn.addEventListener("click", async () => {
       const ok = confirm(
@@ -1537,6 +1614,115 @@ function renderGrid(videos, gridId, emptyId) {
 
     grid.appendChild(card);
   });
+
+  // A full re-render (e.g. from a background poll or a favorite/delete
+  // action) rebuilds every card from scratch, which would otherwise
+  // silently collapse whatever was expanded. Re-apply it here so the
+  // expansion feels persistent rather than flickering shut.
+  const expandedId = expandedCardByGrid[gridId];
+  if (expandedId) {
+    const stillPresent = videos.find(v => v.id === expandedId);
+    if (stillPresent) {
+      const cardEl = [...grid.querySelectorAll(".video-card")].find(
+        c => c.querySelector(".notes-btn").dataset.videoId === expandedId
+      );
+      if (cardEl) expandCardInfoPanel(expandedId, gridId, cardEl, stillPresent);
+    } else {
+      expandedCardByGrid[gridId] = null;
+    }
+  }
+}
+
+function collapseCardInfoPanel(gridId, applyClosedTreatment = true) {
+  const grid = document.getElementById(gridId);
+  const wrapper = grid.querySelector(".expanded-row-wrapper");
+  if (!wrapper) return;
+
+  const cardEl = wrapper.querySelector(".video-card");
+  if (cardEl) {
+    cardEl.classList.remove("expanded");
+    const btn = cardEl.querySelector(".notes-btn");
+    if (btn) btn.classList.remove("active");
+    const videoEl = cardEl.querySelector("video");
+    if (videoEl) {
+      videoEl.pause();
+      videoEl.controls = true;
+      videoEl.loop = false;
+      videoEl.classList.remove("clickable-video");
+      videoEl.removeEventListener("click", toggleVideoPlayPauseOnClick);
+    }
+    wrapper.replaceWith(cardEl); // put the card back exactly where the wrapper was
+
+    if (applyClosedTreatment) {
+      scrollCardNearTop(cardEl, grid);
+      cardEl.classList.add("just-closed");
+      cardEl.addEventListener("animationend", () => {
+        cardEl.classList.remove("just-closed");
+      }, { once: true });
+    }
+  } else {
+    wrapper.remove();
+  }
+}
+
+function expandCardInfoPanel(videoId, gridId, cardEl, v) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "expanded-row-wrapper";
+  cardEl.replaceWith(wrapper); // wrapper takes the card's spot in the grid
+  wrapper.appendChild(cardEl); // card moves inside the wrapper
+
+  cardEl.classList.add("expanded");
+  cardEl.querySelector(".notes-btn").classList.add("active");
+
+  // Native browser controls sit directly over the burned-in info bar on
+  // the video itself, obscuring it — for the enlarged view, replace them
+  // with a minimal click-to-toggle + looping playback instead.
+  const videoEl = cardEl.querySelector("video");
+  if (videoEl && v.media_type !== "photo") {
+    videoEl.controls = false;
+    videoEl.loop = true;
+    videoEl.classList.add("clickable-video");
+    videoEl.addEventListener("click", toggleVideoPlayPauseOnClick);
+  }
+
+  const template = document.getElementById("card-info-panel-template");
+  const panelFragment = template.content.cloneNode(true);
+  const panelEl = panelFragment.querySelector(".card-info-panel");
+  const countInput = panelEl.querySelector(".card-info-count");
+  const notesInput = panelEl.querySelector(".card-info-notes");
+  countInput.value = v.count ?? 1;
+  notesInput.value = v.notes || "";
+
+  panelEl.querySelector(".card-info-close-btn").addEventListener("click", () => {
+    expandedCardByGrid[gridId] = null;
+    collapseCardInfoPanel(gridId, true);
+  });
+
+  const saveField = async (field, value) => {
+    const res = await fetch(`/api/videos/${videoId}/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [field]: value }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+      return;
+    }
+    v[field] = value; // keep the in-memory record in sync for this render cycle
+  };
+
+  countInput.addEventListener("change", () => {
+    const num = parseInt(countInput.value, 10);
+    if (!isNaN(num) && num >= 0) saveField("count", num);
+    else countInput.value = v.count ?? 1; // reject an invalid entry, restore the last known-good value
+  });
+  notesInput.addEventListener("blur", () => {
+    saveField("notes", notesInput.value);
+  });
+
+  wrapper.appendChild(panelEl);
+  return wrapper;
 }
 
 function buildCorrectionOptions(select, video) {

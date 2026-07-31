@@ -297,6 +297,10 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .video-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-auto-flow: dense; /* backfills any gap left when the expanded-row
+                            wrapper (see .expanded-row-wrapper) forces a
+                            full-width row break — a no-op when every card
+                            is the same size, which is the normal case */
   gap: 1rem;
 }
 
@@ -308,12 +312,27 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   overflow: hidden;
 }
 
+/* Brief highlight on the card that was just closed (see collapseCardInfoPanel),
+   so it's easy to spot again once the layout reflows back to normal. Uses
+   outline rather than box-shadow — .video-card has overflow:hidden for its
+   rounded thumbnail corners, which would otherwise clip a box-shadow at
+   the card's edges; outlines aren't affected by overflow clipping. */
+.video-card.just-closed {
+  animation: card-just-closed-fade 1.8s ease-out;
+}
+@keyframes card-just-closed-fade {
+  0% { outline: 3px solid rgba(37, 99, 235, 0.7); outline-offset: 2px; }
+  100% { outline: 3px solid rgba(37, 99, 235, 0); outline-offset: 2px; }
+}
+
 .video-card video {
   width: 100%;
   aspect-ratio: 16 / 9;
   background: black;
   display: block;
 }
+
+.video-card video.clickable-video { cursor: pointer; }
 
 .video-card .card-photo {
   width: 100%;
@@ -465,7 +484,94 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .favorite-btn:hover { background: none; color: #b8860b; }
 .favorite-btn.active { color: #f5a623; }
 
+.notes-btn {
+  background: none;
+  border: none;
+  font-size: 1rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+  opacity: 0.75;
+}
+.notes-btn:hover { background: none; opacity: 1; }
+.notes-btn.active { opacity: 1; }
+
 .card-actions { display: flex; align-items: center; gap: 0.3rem; }
+
+/* Expanded card + its adjacent info panel (see .notes-btn / .card-info-panel).
+   These live inside a full-row wrapper (.expanded-row-wrapper) rather than
+   being spaced via grid-column spans directly on the outer auto-fill grid —
+   that grid's column COUNT changes with screen width, so "3 columns + 2
+   columns" wouldn't reliably add up to the full row width at every size;
+   a dedicated full-width wrapper with an internal 3:2 flex split does. */
+.expanded-row-wrapper {
+  grid-column: 1 / -1; /* the entire row, regardless of how many columns exist */
+  display: flex;
+  gap: 1rem;
+}
+.expanded-row-wrapper .video-card.expanded {
+  flex: 3 1 0;
+  min-width: 0; /* lets it shrink below its content's natural width inside the flex row */
+}
+
+.card-info-panel {
+  flex: 2 1 0;
+  position: relative;
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 10px;
+  padding: 2.2rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  /* No explicit height set — it's a flex sibling of the expanded card
+     inside .expanded-row-wrapper; align-items:stretch (flexbox's default)
+     makes it match the card's height automatically. */
+}
+
+.card-info-close-btn {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  background: none;
+  border: none;
+  font-size: 0.95rem;
+  color: #57606a;
+  padding: 0.2rem 0.4rem;
+  line-height: 1;
+  border-radius: 4px;
+}
+.card-info-close-btn:hover { background: #f1f3f5; color: #1f2328; }
+
+.card-info-field label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #57606a;
+  margin-bottom: 0.35rem;
+}
+
+.card-info-field input,
+.card-info-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #e2e5ea;
+  border-radius: 6px;
+  font-family: inherit;
+}
+
+.card-info-field-notes {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* lets the textarea below actually shrink/grow within a flex column instead of overflowing */
+}
+.card-info-field-notes textarea {
+  flex: 1;
+  resize: none;
+  min-height: 80px;
+}
 
 .delete-btn {
   background: none;
