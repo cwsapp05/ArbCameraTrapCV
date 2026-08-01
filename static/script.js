@@ -52,6 +52,12 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "spreadsheet") {
       loadSpreadsheet();
     }
+    if (btn.dataset.tab === "track") {
+      loadTrackTab();
+    }
+    if (btn.dataset.tab === "settings") {
+      loadSettingsTab();
+    }
   });
 });
 
@@ -1225,28 +1231,14 @@ function renderLibraryGroupCards() {
   });
 }
 
-// ---- Library Settings modal (gear icon) ----
-document.getElementById("library-settings-btn").addEventListener("click", () => {
-  document.getElementById("library-settings-modal").classList.remove("hidden");
+// ---- Settings tab ----
+function loadSettingsTab() {
   document.getElementById("hidden-groups-input").value = "";
   document.getElementById("hidden-groups-autofill").classList.add("hidden");
   renderHiddenGroupsList();
   renderOcrPresetsList();
   updateSettingsTempUnitButtons();
-});
-
-function closeLibrarySettingsModal() {
-  document.getElementById("library-settings-modal").classList.add("hidden");
 }
-document.getElementById("library-settings-close-btn").addEventListener("click", closeLibrarySettingsModal);
-document.getElementById("library-settings-modal").addEventListener("click", (e) => {
-  if (e.target.id === "library-settings-modal") closeLibrarySettingsModal(); // clicking the dim backdrop
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !document.getElementById("library-settings-modal").classList.contains("hidden")) {
-    closeLibrarySettingsModal();
-  }
-});
 
 const hiddenGroupsInput = document.getElementById("hidden-groups-input");
 
@@ -2712,3 +2704,327 @@ function exportSpreadsheetToCSV() {
 
 // Bind button event listener
 document.getElementById("export-csv-btn")?.addEventListener("click", exportSpreadsheetToCSV);
+
+// ==== Track tab ====
+let trackMap = null;
+let locationSelectionOrder = []; // row elements, in the order their checkboxes were checked (not DOM/table order)
+let trackMapMarkersByName = {}; // location name -> Leaflet marker, for hover-highlighting from the media list
+
+async function loadTrackTab() {
+  await refreshTrackMapAndBadge();
+  await loadTrackMediaList();
+}
+
+async function refreshTrackMapAndBadge() {
+  const missingRes = await fetch("/api/locations/missing");
+  const missingData = await missingRes.json();
+  const overlay = document.getElementById("track-missing-overlay");
+  const count = (missingData.missing || []).length;
+  if (count > 0) {
+    overlay.textContent = `⚠ ${count} location${count === 1 ? "" : "s"} need coordinates`;
+    overlay.classList.remove("hidden");
+  } else {
+    overlay.classList.add("hidden");
+  }
+
+  const locRes = await fetch("/api/locations");
+  const allLocations = await locRes.json();
+  renderTrackMap(allLocations);
+}
+
+function renderTrackMap(allLocations) {
+  const entries = Object.entries(allLocations);
+  const emptyMsg = document.getElementById("track-map-empty");
+  const mapEl = document.getElementById("track-map");
+
+  if (entries.length === 0) {
+    emptyMsg.classList.remove("hidden");
+    mapEl.classList.add("hidden");
+    return;
+  }
+  emptyMsg.classList.add("hidden");
+  mapEl.classList.remove("hidden");
+
+  if (!trackMap) {
+    trackMap = L.map("track-map");
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+    }).addTo(trackMap);
+  }
+
+  Object.values(trackMapMarkersByName).forEach(m => trackMap.removeLayer(m));
+  trackMapMarkersByName = {};
+
+  const bounds = [];
+  entries.forEach(([name, coords]) => {
+    const marker = L.marker([coords.lat, coords.lon]).addTo(trackMap);
+    marker.bindPopup(name);
+    trackMapMarkersByName[name] = marker;
+    bounds.push([coords.lat, coords.lon]);
+  });
+
+  if (bounds.length === 1) {
+    trackMap.setView(bounds[0], 15);
+  } else {
+    trackMap.fitBounds(bounds, { padding: [30, 30] });
+  }
+
+  // Leaflet sizes itself off the container's CURRENT visible dimensions —
+  // if the tab was hidden when the map was first created, this fixes any
+  // stale sizing now that the container is actually visible.
+  setTimeout(() => trackMap.invalidateSize(), 0);
+}
+
+function dielPeriodClass(period) {
+  const known = { Day: "diel-day", Night: "diel-night", Dawn: "diel-dawn", Dusk: "diel-dusk" };
+  return known[period] || "";
+}
+
+function highlightMapMarker(locationName) {
+  const marker = trackMapMarkersByName[locationName];
+  if (marker) marker.openPopup();
+}
+
+function unhighlightMapMarker(locationName) {
+  const marker = trackMapMarkersByName[locationName];
+  if (marker) marker.closePopup();
+}
+
+let trackMediaCache = { videos: [], knownLocations: {} };
+
+async function loadTrackMediaList() {
+  const [videosRes, locationsRes] = await Promise.all([
+    fetch("/api/videos"),
+    fetch("/api/locations"),
+  ]);
+  trackMediaCache.videos = await videosRes.json();
+  trackMediaCache.knownLocations = await locationsRes.json();
+  populateTrackSpeciesFilter(trackMediaCache.videos);
+  applyTrackMediaFilters();
+}
+
+function populateTrackSpeciesFilter(allVideos) {
+  const select = document.getElementById("track-filter-species");
+  const currentValue = select.value;
+  const speciesSet = new Set(
+    allVideos.map(v => v.display_species).filter(s => s && !hiddenGroups.includes(s))
+  );
+  select.innerHTML = '<option value="">All animals</option>';
+  [...speciesSet].sort().forEach(s => {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.textContent = s;
+    select.appendChild(opt);
+  });
+  if (speciesSet.has(currentValue)) select.value = currentValue; // keep the selection if it's still a valid option
+}
+
+function applyTrackMediaFilters() {
+  const { videos: allVideos, knownLocations } = trackMediaCache;
+
+  // Only entries whose location actually has a map point — nothing to
+  // highlight otherwise, and chronological order sets this up naturally
+  // for the planned species/timeframe path-following feature later.
+  let relevant = allVideos.filter(v =>
+    v.location && knownLocations[v.location] && !hiddenGroups.includes(v.display_species)
+  );
+
+  const speciesVal = document.getElementById("track-filter-species").value;
+  if (speciesVal) {
+    relevant = relevant.filter(v => v.display_species === speciesVal);
+  }
+
+  const startVal = document.getElementById("track-filter-start").value; // "" or "YYYY-MM-DDTHH:MM"
+  const endVal = document.getElementById("track-filter-end").value;
+  if (startVal || endVal) {
+    const startDate = startVal ? new Date(startVal) : null;
+    const endDate = endVal ? new Date(endVal) : null;
+    relevant = relevant.filter(v => {
+      if (!v.date) return false; // undated entries can't be placed within a chosen range
+      const entryDate = new Date(`${v.date}T${v.time || "00:00:00"}`);
+      if (startDate && entryDate < startDate) return false;
+      if (endDate && entryDate > endDate) return false;
+      return true;
+    });
+  }
+
+  relevant.sort((a, b) => {
+    const aKey = (a.date || "9999-99-99") + " " + (a.time || "99:99:99");
+    const bKey = (b.date || "9999-99-99") + " " + (b.time || "99:99:99");
+    return aKey.localeCompare(bKey);
+  });
+
+  renderTrackMediaCards(relevant);
+}
+
+function renderTrackMediaCards(relevant) {
+  const listEl = document.getElementById("track-media-list");
+  listEl.innerHTML = "";
+  const template = document.getElementById("track-media-card-template");
+
+  relevant.forEach(v => {
+    const cardFragment = template.content.cloneNode(true);
+    const cardEl = cardFragment.querySelector(".track-media-card");
+    const dielClass = dielPeriodClass(v.diel_period);
+    if (dielClass) cardEl.classList.add(dielClass);
+
+    cardEl.querySelector(".track-media-card-species").textContent = v.display_species || "";
+    cardEl.querySelector(".track-media-card-location").textContent = v.location;
+    cardEl.querySelector(".track-media-card-date").textContent = v.date || "";
+    cardEl.querySelector(".track-media-card-time").textContent = v.time || "";
+    cardEl.querySelector(".track-media-card-temp").textContent = formatTemperatureForDisplay(v.temperature, temperatureDisplayUnit);
+    cardEl.querySelector(".track-media-card-filename").textContent = v.display_filename || v.filename;
+
+    cardEl.addEventListener("mouseenter", () => highlightMapMarker(v.location));
+    cardEl.addEventListener("mouseleave", () => unhighlightMapMarker(v.location));
+
+    cardEl.querySelector(".track-media-card-zoom-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      showVideoModal(v.id, v.media_type); // already autoplays for videos
+    });
+
+    listEl.appendChild(cardFragment);
+  });
+}
+
+async function openLocationsModal() {
+  locationSelectionOrder = [];
+  const [missingRes, allRes] = await Promise.all([
+    fetch("/api/locations/missing"),
+    fetch("/api/locations"),
+  ]);
+  const missingData = await missingRes.json();
+  const allLocations = await allRes.json();
+
+  const combined = [];
+  (missingData.missing || []).forEach(name => combined.push({ name, lat: "", lon: "", needsCoords: true }));
+  Object.entries(allLocations).forEach(([name, coords]) =>
+    combined.push({ name, lat: coords.lat, lon: coords.lon, needsCoords: false })
+  );
+  combined.sort((a, b) => {
+    if (a.needsCoords !== b.needsCoords) return a.needsCoords ? -1 : 1; // locations needing coordinates float to the top
+    return a.name.localeCompare(b.name);
+  });
+
+  const listEl = document.getElementById("locations-list");
+  listEl.innerHTML = "";
+  const template = document.getElementById("location-row-template");
+
+  combined.forEach(loc => {
+    const rowFragment = template.content.cloneNode(true);
+    const rowEl = rowFragment.querySelector(".location-row");
+    if (loc.needsCoords) rowEl.classList.add("needs-coords");
+    rowEl.dataset.originalName = loc.name;
+
+    rowEl.querySelector(".location-row-name").value = loc.name;
+    rowEl.querySelector(".location-row-lat").value = loc.lat;
+    rowEl.querySelector(".location-row-lon").value = loc.lon;
+
+    rowEl.querySelector(".location-row-save-btn").addEventListener("click", () => saveLocationRow(rowEl));
+    rowEl.querySelector(".location-row-checkbox").addEventListener("change", (e) => {
+      if (e.target.checked) {
+        locationSelectionOrder.push(rowEl);
+      } else {
+        locationSelectionOrder = locationSelectionOrder.filter(r => r !== rowEl);
+      }
+      updateMergeButtonState();
+    });
+
+    listEl.appendChild(rowFragment);
+  });
+
+  document.getElementById("merge-target-form").classList.add("hidden");
+  updateMergeButtonState();
+  document.getElementById("locations-modal").classList.remove("hidden");
+}
+
+async function saveLocationRow(rowEl) {
+  const originalName = rowEl.dataset.originalName;
+  const name = rowEl.querySelector(".location-row-name").value.trim();
+  const lat = rowEl.querySelector(".location-row-lat").value;
+  const lon = rowEl.querySelector(".location-row-lon").value;
+
+  if (!name) { alert("Name is required."); return; }
+  if (lat === "" || lon === "") { alert("Latitude and longitude are required."); return; }
+
+  const res = await fetch("/api/locations/merge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_names: [originalName], target_name: name, lat: parseFloat(lat), lon: parseFloat(lon) }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+
+  await openLocationsModal(); // refresh the list — the missing count may have changed
+  await refreshTrackMapAndBadge();
+  await loadTrackMediaList();
+}
+
+function updateMergeButtonState() {
+  const checked = document.querySelectorAll(".location-row-checkbox:checked");
+  document.getElementById("merge-selected-locations-btn").disabled = checked.length < 2;
+}
+
+document.getElementById("merge-selected-locations-btn").addEventListener("click", () => {
+  const checkedRows = [...document.querySelectorAll(".location-row-checkbox:checked")].map(cb => cb.closest(".location-row"));
+  if (checkedRows.length < 2) return;
+
+  // Default from whichever row was actually checked FIRST (click order),
+  // not whichever sorts first in the table — locationSelectionOrder tracks
+  // that; fall back to DOM order only if it's somehow out of sync.
+  const firstRow = locationSelectionOrder.find(r => checkedRows.includes(r)) || checkedRows[0];
+  document.getElementById("merge-target-name").value = firstRow.querySelector(".location-row-name").value;
+  document.getElementById("merge-target-lat").value = firstRow.querySelector(".location-row-lat").value;
+  document.getElementById("merge-target-lon").value = firstRow.querySelector(".location-row-lon").value;
+  const form = document.getElementById("merge-target-form");
+  form.classList.remove("hidden");
+  form._sourceNames = checkedRows.map(r => r.dataset.originalName);
+});
+
+document.getElementById("cancel-merge-btn").addEventListener("click", () => {
+  document.getElementById("merge-target-form").classList.add("hidden");
+});
+
+document.getElementById("confirm-merge-btn").addEventListener("click", async () => {
+  const form = document.getElementById("merge-target-form");
+  const sourceNames = form._sourceNames || [];
+  const targetName = document.getElementById("merge-target-name").value.trim();
+  const lat = document.getElementById("merge-target-lat").value;
+  const lon = document.getElementById("merge-target-lon").value;
+
+  if (sourceNames.length < 2) { alert("Select at least two locations to merge."); return; }
+  if (!targetName) { alert("Merged name is required."); return; }
+  if (lat === "" || lon === "") { alert("Latitude and longitude are required."); return; }
+
+  const res = await fetch("/api/locations/merge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_names: sourceNames, target_name: targetName, lat: parseFloat(lat), lon: parseFloat(lon) }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+
+  form.classList.add("hidden");
+  await openLocationsModal();
+  await refreshTrackMapAndBadge();
+  await loadTrackMediaList();
+});
+
+document.getElementById("manage-locations-btn").addEventListener("click", () => openLocationsModal());
+document.getElementById("track-missing-overlay").addEventListener("click", () => openLocationsModal());
+
+document.getElementById("track-filter-start").addEventListener("change", applyTrackMediaFilters);
+document.getElementById("track-filter-end").addEventListener("change", applyTrackMediaFilters);
+document.getElementById("track-filter-species").addEventListener("change", applyTrackMediaFilters);
+
+document.querySelectorAll(".track-filter-clear-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const target = document.getElementById(btn.dataset.target);
+    target.value = "";
+    applyTrackMediaFilters();
+  });
+});
+document.getElementById("locations-modal-close-btn").addEventListener("click", () => {
+  document.getElementById("locations-modal").classList.add("hidden");
+});

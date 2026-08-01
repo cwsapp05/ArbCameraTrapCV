@@ -48,6 +48,7 @@ JOBS_INDEX_FILE = RUNS_DIR / "jobs_index.json"
 VIDEOS_INDEX_FILE = RUNS_DIR / "videos_index.json"
 SPECIES_LIST_FILE = RUNS_DIR / "species_list.json"
 OCR_CONFIGS_FILE = RUNS_DIR / "ocr_configs.json"
+LOCATIONS_FILE = RUNS_DIR / "locations.json"
 
 # Reserved dropdown values that are never real saved config names.
 SKIP_OCR_VALUE = "__skip_ocr__"
@@ -73,6 +74,9 @@ jobs_lock = threading.Lock()
 
 videos = {}  # video_id -> record
 videos_lock = threading.Lock()
+
+locations = {}  # location name -> {"lat": float, "lon": float} — only locations with confirmed coordinates
+locations_lock = threading.Lock()
 
 canonical_species = []  # full taxonomy the classifier can produce, incl. "blank"
 species_lock = threading.Lock()
@@ -134,6 +138,12 @@ def save_species_list():
             json.dump(canonical_species, f, indent=2)
 
 
+def save_locations():
+    with locations_lock:
+        with open(LOCATIONS_FILE, "w") as f:
+            json.dump(locations, f, indent=2)
+
+
 def save_ocr_configs():
     with ocr_configs_lock:
         with open(OCR_CONFIGS_FILE, "w") as f:
@@ -164,6 +174,7 @@ def load_ocr_configs():
 
 jobs = load_json(JOBS_INDEX_FILE, {})
 videos = load_json(VIDEOS_INDEX_FILE, {})
+locations = load_json(LOCATIONS_FILE, {})
 canonical_species = load_json(SPECIES_LIST_FILE, [])
 load_ocr_configs()
 
@@ -914,6 +925,105 @@ def list_species():
         {"label": s, "count": counts.get(s, 0)}
         for s in sorted(species)
     ])
+
+
+def prune_unused_locations():
+    """
+    Removes any location from the locations database that no video
+    currently references — e.g. after the last video pointing to it was
+    deleted, or had its Location field edited to something else. Runs on
+    read (see list_locations/list_missing_locations) rather than being
+    hooked into every place a video's location can change (delete, manual
+    edit, bulk merge, etc.) — self-heals regardless of how the reference
+    disappeared, instead of relying on catching every mutation site.
+    """
+    with videos_lock:
+        used = {v["location"] for v in videos.values() if v.get("location")}
+    with locations_lock:
+        orphaned = [name for name in locations if name not in used]
+        for name in orphaned:
+            del locations[name]
+    if orphaned:
+        save_locations()
+
+
+@app.route("/api/locations")
+def list_locations():
+    """Every location that has confirmed coordinates — name -> {lat, lon}."""
+    prune_unused_locations()
+    with locations_lock:
+        return jsonify(locations)
+
+
+@app.route("/api/locations/missing")
+def list_missing_locations():
+    """
+    Location names currently used by at least one video but with no
+    confirmed coordinates yet — what the Track tab checks on open to decide
+    whether to prompt for coordinates.
+    """
+    prune_unused_locations()
+    with videos_lock:
+        used = {v["location"] for v in videos.values() if v.get("location")}
+    with locations_lock:
+        known = set(locations.keys())
+    return jsonify({"missing": sorted(used - known)})
+
+
+@app.route("/api/locations/merge", methods=["POST"])
+def merge_locations():
+    """
+    One endpoint covers all three location-editing actions from the Track
+    tab's setup popup, since they're really the same operation at different
+    scales:
+      - Add coordinates to an existing name: source_names=[name], target_name=name
+      - Rename a location:                   source_names=[old],  target_name=new
+      - Merge several into one:              source_names=[a,b,c], target_name=merged
+    Every video whose location matches any of source_names is updated to
+    target_name, and the locations database is updated to reflect only the
+    target name with the given coordinates — source names other than the
+    target are removed from it.
+    """
+    data = request.get_json(force=True)
+    source_names = data.get("source_names")
+    target_name = (data.get("target_name") or "").strip()
+    lat = data.get("lat")
+    lon = data.get("lon")
+
+    if not isinstance(source_names, list) or not source_names:
+        return jsonify({"error": "At least one source location is required"}), 400
+    if not target_name:
+        return jsonify({"error": "Target name is required"}), 400
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Valid latitude and longitude are required"}), 400
+    if not (-90 <= lat <= 90):
+        return jsonify({"error": "Latitude must be between -90 and 90"}), 400
+    if not (-180 <= lon <= 180):
+        return jsonify({"error": "Longitude must be between -180 and 180"}), 400
+
+    source_set = set(source_names)
+    with videos_lock:
+        updated_count = 0
+        for v in videos.values():
+            if v.get("location") in source_set:
+                v["location"] = target_name
+                updated_count += 1
+    save_videos_index()
+
+    with locations_lock:
+        for name in source_set:
+            if name != target_name:
+                locations.pop(name, None)
+        locations[target_name] = {"lat": lat, "lon": lon}
+    save_locations()
+
+    return jsonify({
+        "target_name": target_name, "lat": lat, "lon": lon,
+        "videos_updated": updated_count,
+    })
 
 
 @app.route("/api/videos")

@@ -111,6 +111,11 @@ button {
 button:hover { background: #1d4ed8; }
 button:disabled { background: #a9b4c2; cursor: not-allowed; }
 
+.secondary-btn {
+  background: #57606a;
+}
+.secondary-btn:hover { background: #444b53; }
+
 #run-btn { margin-top: 1.1rem; width: 100%; }
 
 .status-box {
@@ -1147,7 +1152,9 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: 1100; /* Leaflet's own panes/controls use z-index up to 1000
+                    (see #track-map) — this keeps modals layered above the
+                    map regardless of which one is open */
 }
 
 .modal-box {
@@ -1195,24 +1202,258 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .modal-species-item:hover { background: #f6f7f9; }
 .modal-species-item .count { color: #8a929c; font-size: 0.8rem; }
 
-/* ---- Library Settings (gear icon) ---- */
-.gear-btn {
-  background: none;
-  border: none;
-  font-size: 1.3rem;
-  padding: 0.2rem 0.4rem;
-  line-height: 1;
-  opacity: 0.6;
-}
-.gear-btn:hover { background: none; opacity: 1; }
-
-.settings-modal-box {
-  width: 90%;
+/* ---- Settings tab ---- */
+#tab-settings {
   max-width: 420px;
 }
 
-.settings-modal-box label {
-  margin-top: 0.9rem;
+.settings-section {
+  border: 1px solid #e2e5ea;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+  background: #fbfbfc;
+}
+.settings-section:last-child { margin-bottom: 0; }
+
+/* ---- Track tab ---- */
+.track-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.track-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.track-filter-field label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #57606a;
+  margin: 0;
+}
+.track-filter-field > div, .track-filter-field {
+  position: relative;
+}
+.track-filter-field input,
+.track-filter-field select {
+  font-size: 0.85rem;
+  padding: 0.4rem 1.7rem 0.4rem 0.55rem;
+  border: 1px solid #e2e5ea;
+  border-radius: 6px;
+  font-family: inherit;
+  background: white;
+}
+
+.track-filter-clear-btn {
+  position: absolute;
+  right: 0.3rem;
+  bottom: 0.4rem;
+  background: none;
+  border: none;
+  color: #8a929c;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.3rem;
+  line-height: 1;
+}
+.track-filter-clear-btn:hover { background: #f1f3f5; color: #1f2328; }
+
+.track-simulate-btn {
+  opacity: 0.7;
+}
+
+.track-map-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+#track-map {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  border: 1px solid #e2e5ea;
+  background: #f6f7f9;
+}
+
+.track-missing-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 500; /* above the map's own tiles/markers/controls, well below modals (1100) */
+  background: #fef2f2;
+  border: 2px solid #dc2626;
+  color: #7f1d1d;
+  padding: 0.9rem 1.4rem;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.3);
+  white-space: nowrap;
+}
+.track-missing-overlay:hover { background: #fee2e2; }
+
+.track-layout {
+  display: flex;
+  gap: 1rem;
+  height: 65vh;
+}
+
+.track-media-list {
+  width: 300px;
+  flex-shrink: 0;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-right: 0.2rem; /* keeps cards clear of the scrollbar */
+}
+
+.track-media-card {
+  position: relative;
+  border-radius: 8px;
+  padding: 0.5rem 2rem 0.5rem 0.6rem;
+  cursor: default;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.track-media-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+.track-media-card-species { text-transform: capitalize; }
+.track-media-card-location {
+  font-weight: 600;
+  opacity: 0.8;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-media-card-bottom {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  opacity: 0.85;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.track-media-card-bottom span:not(:empty)::after { content: "•"; margin-left: 0.5rem; opacity: 0.6; }
+.track-media-card-bottom span:last-child::after { content: ""; margin: 0; }
+.track-media-card-filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-media-card-zoom-btn {
+  position: absolute;
+  top: 50%;
+  right: 0.4rem;
+  transform: translateY(-50%);
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.15);
+  color: inherit;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.track-media-card-zoom-btn:hover { background: rgba(0, 0, 0, 0.3); }
+
+/* Diel period color coding */
+.track-media-card.diel-day { background: #dbeeff; color: #1f2328; }
+.track-media-card.diel-night { background: #1e3a5f; color: #e8eef5; }
+.track-media-card.diel-dawn { background: #fef3c7; color: #1f2328; }
+.track-media-card.diel-dusk { background: #fed7aa; color: #1f2328; }
+.track-media-card:not(.diel-day):not(.diel-night):not(.diel-dawn):not(.diel-dusk) { background: #f1f3f5; color: #1f2328; }
+
+/* ---- Location management modal ---- */
+.locations-modal-box {
+  width: 92%;
+  max-width: 720px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.locations-modal-intro {
+  color: #57606a;
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+}
+
+.locations-modal-actions {
+  margin-bottom: 0.8rem;
+}
+
+.merge-target-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  background: #f6f7f9;
+  border: 1px solid #e2e5ea;
+  border-radius: 8px;
+  padding: 0.7rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.merge-target-form input { flex: 1; min-width: 100px; }
+
+.locations-list-header,
+.location-row {
+  display: grid;
+  grid-template-columns: 1.6rem 2fr 1fr 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.locations-list-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #57606a;
+  padding: 0 0.3rem 0.4rem;
+  border-bottom: 1px solid #e2e5ea;
+}
+
+.locations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.location-row {
+  padding: 0.4rem 0.3rem;
+}
+.location-row input[type="text"],
+.location-row input[type="number"] {
+  box-sizing: border-box;
+  width: 100%;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #e2e5ea;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.location-row.needs-coords input[type="text"] {
+  border-color: #fca5a5;
+  background: #fef2f2;
 }
 
 /* ---- OCR Configuration Wizard ---- */
