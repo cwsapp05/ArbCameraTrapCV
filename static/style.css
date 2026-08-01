@@ -478,17 +478,6 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 .card-zoom-btn:hover { background: rgba(0, 0, 0, 0.65); }
 
-.favorite-btn {
-  background: none;
-  border: none;
-  color: #d4a017;
-  font-size: 1.2rem;
-  padding: 0 0.2rem;
-  line-height: 1;
-}
-.favorite-btn:hover { background: none; color: #b8860b; }
-.favorite-btn.active { color: #f5a623; }
-
 .notes-btn {
   background: none;
   border: none;
@@ -524,7 +513,7 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   background: white;
   border: 1px solid #e2e5ea;
   border-radius: 10px;
-  padding: 2.2rem 1rem 1rem;
+  padding: 2.2rem 1rem 3.2rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -532,6 +521,49 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
      inside .expanded-row-wrapper; align-items:stretch (flexbox's default)
      makes it match the card's height automatically. */
 }
+
+.card-info-delete-btn {
+  position: absolute;
+  bottom: 0.8rem;
+  right: 0.8rem;
+  background: white;
+  color: #ef4444;
+  border: 1.5px solid #fca5a5;
+  border-radius: 6px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.card-info-delete-btn:hover { background: #fef2f2; }
+
+.card-info-toggle-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.card-info-toggle-row button {
+  flex: 1;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1.5px solid #e2e5ea;
+  background: #f6f7f9;
+  color: #57606a;
+}
+
+.card-info-review-btn.active {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+.card-info-review-btn.active:hover { background: #1d4ed8; }
+
+.card-info-favorite-btn.active {
+  background: #f5c518;
+  color: #4a3b00;
+  border-color: #f5c518;
+}
+.card-info-favorite-btn.active:hover { background: #e0b213; }
 
 .card-info-close-btn {
   position: absolute;
@@ -577,16 +609,6 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   resize: none;
   min-height: 80px;
 }
-
-.delete-btn {
-  background: none;
-  border: none;
-  font-size: 0.95rem;
-  padding: 0 0.2rem;
-  line-height: 1;
-  opacity: 0.7;
-}
-.delete-btn:hover { background: none; opacity: 1; }
 
 .correction-row {
   display: flex;
@@ -1215,6 +1237,19 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   background: #fbfbfc;
 }
 .settings-section:last-child { margin-bottom: 0; }
+
+.settings-section-hint {
+  font-size: 0.8rem;
+  color: #57606a;
+  margin: 0 0 0.8rem;
+}
+
+#clear-all-marks-btn.confirming {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1.5px solid #dc2626;
+}
+#clear-all-marks-btn.confirming:hover { background: #fee2e2; }
 
 /* ---- Track tab ---- */
 .track-toolbar {

@@ -25,6 +25,14 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.querySelectorAll("video").forEach(v => v.pause());
     currentlyPlayingVideo = null;
 
+    // Close any expanded card (notes panel) in either grid — leaving the
+    // tab shouldn't leave one hanging open in the background.
+    collapseCardInfoPanel("lib-grid", false);
+    collapseCardInfoPanel("fav-grid", false);
+    if (previousTab === "library" && btn.dataset.tab !== "library") {
+      libraryCardOrder = null; // leaving the tab entirely — next visit sorts fresh
+    }
+
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
     btn.classList.add("active");
@@ -939,7 +947,7 @@ let reviewIndex = 0;
 async function loadReviewQueue() {
   const res = await fetch("/api/videos");
   const vids = await res.json();
-  reviewQueue = vids.filter(v => !v.corrected_species && !hiddenGroups.includes(v.display_species));
+  reviewQueue = vids.filter(v => v.marked_for_review && !hiddenGroups.includes(v.display_species));
   reviewIndex = 0;
   renderReviewCard();
 }
@@ -1121,7 +1129,7 @@ async function refreshSpeciesData() {
   unreviewedCountsBySpecies = {};
   totalUnreviewedCount = 0;
   vids.forEach(v => {
-    if (!v.corrected_species && !hiddenGroups.includes(v.display_species)) {
+    if (v.marked_for_review && !hiddenGroups.includes(v.display_species)) {
       unreviewedCountsBySpecies[v.display_species] = (unreviewedCountsBySpecies[v.display_species] || 0) + 1;
       totalUnreviewedCount++;
     }
@@ -1172,6 +1180,8 @@ document.getElementById("fav-species-filter").addEventListener("change", loadFav
 // ---- Library tab: species group cards + drill-down detail view ----
 function showLibraryGroups() {
   libraryActiveSpecies = null;
+  libraryCardOrder = null; // leaving the category — next time it's entered, sort fresh
+  collapseCardInfoPanel("lib-grid", false); // close any expanded card without the "just closed" treatment (this isn't a user-initiated close)
   document.getElementById("lib-detail-view").classList.add("hidden");
   document.getElementById("lib-groups-view").classList.remove("hidden");
   renderLibraryGroupCards();
@@ -1238,7 +1248,37 @@ function loadSettingsTab() {
   renderHiddenGroupsList();
   renderOcrPresetsList();
   updateSettingsTempUnitButtons();
+  resetClearAllMarksBtn();
 }
+
+let clearAllMarksTimeout = null;
+
+function resetClearAllMarksBtn() {
+  clearTimeout(clearAllMarksTimeout);
+  const btn = document.getElementById("clear-all-marks-btn");
+  btn.classList.remove("confirming");
+  btn.textContent = "Clear all marked for review";
+}
+
+document.getElementById("clear-all-marks-btn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (!btn.classList.contains("confirming")) {
+    // First click: light warning, not an action yet — a second click
+    // within a few seconds is required to actually confirm.
+    btn.classList.add("confirming");
+    btn.textContent = "Click again to confirm";
+    clearAllMarksTimeout = setTimeout(() => resetClearAllMarksBtn(), 4000);
+    return;
+  }
+
+  resetClearAllMarksBtn();
+  btn.disabled = true;
+  const res = await fetch("/api/videos/clear-all-marks", { method: "POST" });
+  const data = await res.json();
+  btn.disabled = false;
+  if (data.error) { alert(data.error); return; }
+  await refreshSpeciesData(); // badge counts reflect the clear immediately
+});
 
 const hiddenGroupsInput = document.getElementById("hidden-groups-input");
 
@@ -1418,17 +1458,84 @@ document.getElementById("lib-back-btn").addEventListener("click", () => {
 });
 
 // ---- Library / Favorites video grids ----
-async function loadLibrary() {
+let libraryCardOrder = null; // frozen video-ID order for the CURRENT category-viewing session; null means "sort fresh"
+
+// ---- Targeted single-card updates (avoids rebuilding the whole grid for a
+// one-video change like favoriting or correcting a species) ----
+function syncExpandedPanelReviewState(gridId, videoId, markedForReview) {
+  // The notes panel is a separate DOM structure from the card, managed by
+  // expandCardInfoPanel's own closure — a handler elsewhere (like
+  // correcting a species) that changes marked_for_review has no direct
+  // access to that closure's button, so it re-derives the button's state
+  // fresh here instead, but only if this video is the one currently open.
+  if (expandedCardByGrid[gridId] !== videoId) return;
+  const panel = document.getElementById(gridId)?.querySelector(".card-info-panel");
+  const reviewBtn = panel && panel.querySelector(".card-info-review-btn");
+  if (!reviewBtn) return;
+  reviewBtn.textContent = markedForReview ? "Marked for review" : "Mark for review";
+  reviewBtn.classList.toggle("active", !!markedForReview);
+}
+
+function findLibraryCardEl(gridId, videoId) {
+  const grid = document.getElementById(gridId);
+  const notesBtn = grid.querySelector(`.notes-btn[data-video-id="${videoId}"]`);
+  return notesBtn ? notesBtn.closest(".video-card") : null;
+}
+
+function removeLibraryCard(gridId, videoId) {
+  const cardEl = findLibraryCardEl(gridId, videoId);
+  if (!cardEl) return;
+  const wrapper = cardEl.closest(".expanded-row-wrapper");
+  (wrapper || cardEl).remove();
+  if (expandedCardByGrid[gridId] === videoId) {
+    expandedCardByGrid[gridId] = null;
+  }
+  const grid = document.getElementById(gridId);
+  const emptyId = gridId === "lib-grid" ? "lib-empty" : "fav-empty";
+  if (!grid.querySelector(".video-card")) {
+    document.getElementById(emptyId).classList.remove("hidden");
+  }
+}
+
+function patchLibraryCardSpecies(gridId, videoId, newDisplaySpecies) {
+  const cardEl = findLibraryCardEl(gridId, videoId);
+  if (!cardEl) return;
+
+  const badge = cardEl.querySelector(".species-badge");
+  badge.textContent = newDisplaySpecies;
+  badge.classList.toggle("blank", newDisplaySpecies === "blank");
+  cardEl.querySelector(".verified-info").classList.remove("hidden");
+
+  const select = cardEl.querySelector(".correction-select");
+  if (select) select.value = newDisplaySpecies;
+}
+
+async function loadLibrary(preserveOrder = false) {
   const species = libraryActiveSpecies;
   const url = "/api/videos" + (species ? `?species=${encodeURIComponent(species)}` : "");
   const res = await fetch(url);
   const vids = await res.json();
-  vids.sort((a, b) => {
-    const aUnreviewed = !a.corrected_species;
-    const bUnreviewed = !b.corrected_species;
-    if (aUnreviewed === bUnreviewed) return 0; // stable sort preserves existing order within each group
-    return aUnreviewed ? -1 : 1; // unreviewed (still on the AI's guess) surfaces first
-  });
+
+  if (preserveOrder && libraryCardOrder) {
+    // Keep the order from when this category was first opened — reviewing
+    // or marking an entry mid-session shouldn't reshuffle the grid out from
+    // under the user. Only leaving the category (or the tab) resets this.
+    const orderIndex = new Map(libraryCardOrder.map((id, i) => [id, i]));
+    vids.sort((a, b) => {
+      const aIdx = orderIndex.has(a.id) ? orderIndex.get(a.id) : Infinity;
+      const bIdx = orderIndex.has(b.id) ? orderIndex.get(b.id) : Infinity;
+      return aIdx - bIdx;
+    });
+  } else {
+    vids.sort((a, b) => {
+      const aUnreviewed = !!a.marked_for_review;
+      const bUnreviewed = !!b.marked_for_review;
+      if (aUnreviewed === bUnreviewed) return 0; // stable sort preserves existing order within each group
+      return aUnreviewed ? -1 : 1; // marked-for-review entries surface first
+    });
+    libraryCardOrder = vids.map(v => v.id); // freeze this order for the rest of the session
+  }
+
   renderGrid(vids, "lib-grid", "lib-empty");
 }
 
@@ -1485,7 +1592,6 @@ function toggleCardInfoPanel(videoId, gridId, cardEl, v) {
   if (currentlyExpanded === videoId) {
     // Re-clicking the currently-expanded card's own button — a genuine
     // close, same treatment as the X button.
-    expandedCardByGrid[gridId] = null;
     collapseCardInfoPanel(gridId, true);
     return;
   }
@@ -1554,20 +1660,17 @@ function renderGrid(videos, gridId, emptyId) {
     if (v.display_species === "blank") badge.classList.add("blank");
 
     // "Verified by" is hardcoded for now (single-user assumption) — swap
-    // for the actual editor's name once accounts/auth exist.
+    // for the actual editor's name once accounts/auth exist. Independent
+    // from the review mark below — a video can be both verified AND
+    // re-flagged for another look at the same time.
     if (v.corrected_species) {
       card.querySelector(".verified-info").classList.remove("hidden");
-    } else {
+    }
+    if (v.marked_for_review) {
       card.querySelector(".unreviewed-corner-bubble").classList.remove("hidden");
     }
 
-    const favBtn = card.querySelector(".favorite-btn");
-    favBtn.textContent = v.favorited ? "★" : "☆";
-    if (v.favorited) favBtn.classList.add("active");
     const whichTab = gridId === "lib-grid" ? "lib" : "fav";
-    favBtn.addEventListener("click", () =>
-      toggleFavorite(v.id, !v.favorited, whichTab)
-    );
 
     const notesBtn = card.querySelector(".notes-btn");
     notesBtn.dataset.videoId = v.id;
@@ -1575,17 +1678,6 @@ function renderGrid(videos, gridId, emptyId) {
       e.stopPropagation();
       const cardEl = e.currentTarget.closest(".video-card");
       toggleCardInfoPanel(v.id, gridId, cardEl, v);
-    });
-
-    const deleteBtn = card.querySelector(".delete-btn");
-    deleteBtn.addEventListener("click", async () => {
-      const ok = confirm(
-        `Delete "${v.filename}" from the library?\n\nThis only removes it from the library — the file on your computer is NOT deleted.`
-      );
-      if (!ok) return;
-      await deleteVideo(v.id);
-      await refreshSpeciesData(); // counts shift when a video disappears
-      if (whichTab === "lib") loadLibrary(); else loadFavorites();
     });
 
     const correctionSelect = card.querySelector(".correction-select");
@@ -1600,13 +1692,33 @@ function renderGrid(videos, gridId, emptyId) {
 
     card.querySelector(".save-correction-btn").addEventListener("click", async () => {
       if (correctionSelect.value === "__add_new__") return; // handled by modal instead
-      await saveCorrection(v.id, correctionSelect.value);
-      await refreshSpeciesData();
-      if (whichTab === "lib") {
-        loadLibrary(); // group counts refresh next time "Back to species" is clicked
+      const data = await saveCorrection(v.id, correctionSelect.value);
+      if (data.error) { alert(data.error); return; }
+      v.corrected_species = data.corrected_species;
+      v.display_species = data.display_species;
+      v.marked_for_review = data.marked_for_review;
+      await refreshSpeciesData(); // badge counts shift; doesn't touch the current grid
+
+      const gridIdForTab = whichTab === "lib" ? "lib-grid" : "fav-grid";
+      if (whichTab === "fav") populateFilterDropdown("fav-species-filter");
+      const activeFilter = whichTab === "lib"
+        ? libraryActiveSpecies
+        : document.getElementById("fav-species-filter").value;
+
+      // Correcting a species can change whether this video still belongs in
+      // the category/filter currently being viewed — everything else in the
+      // grid is untouched either way, avoiding the full-grid rebuild this
+      // used to trigger.
+      if (activeFilter && data.display_species !== activeFilter) {
+        removeLibraryCard(gridIdForTab, v.id);
       } else {
-        populateFilterDropdown("fav-species-filter");
-        loadFavorites();
+        patchLibraryCardSpecies(gridIdForTab, v.id, data.display_species);
+        if (!data.marked_for_review) {
+          const cardEl = findLibraryCardEl(gridIdForTab, v.id);
+          const bubble = cardEl && cardEl.querySelector(".unreviewed-corner-bubble");
+          if (bubble) bubble.classList.add("hidden");
+        }
+        syncExpandedPanelReviewState(gridIdForTab, v.id, data.marked_for_review);
       }
     });
 
@@ -1632,6 +1744,15 @@ function renderGrid(videos, gridId, emptyId) {
 }
 
 function collapseCardInfoPanel(gridId, applyClosedTreatment = true) {
+  // Always cleared unconditionally, even if there's nothing to visually
+  // collapse below — a call site that expected this to close something but
+  // hit the early-return would otherwise leave the tracker pointing at a
+  // video that's no longer actually expanded, causing it to silently
+  // re-expand the next time this grid re-renders (see the "re-apply
+  // expansion" logic in renderGrid) — which is exactly the bug this
+  // function centralizing the reset is meant to prevent.
+  expandedCardByGrid[gridId] = null;
+
   const grid = document.getElementById(gridId);
   const wrapper = grid.querySelector(".expanded-row-wrapper");
   if (!wrapper) return;
@@ -1691,9 +1812,59 @@ function expandCardInfoPanel(videoId, gridId, cardEl, v) {
   countInput.value = v.count ?? 1;
   notesInput.value = v.notes || "";
 
+  const reviewBtn = panelEl.querySelector(".card-info-review-btn");
+  const favoriteBtn = panelEl.querySelector(".card-info-favorite-btn");
+
+  function updateReviewBtnLabel() {
+    reviewBtn.textContent = v.marked_for_review ? "Marked for review" : "Mark for review";
+    reviewBtn.classList.toggle("active", !!v.marked_for_review);
+  }
+  function updateFavoriteBtnLabel() {
+    favoriteBtn.textContent = v.favorited ? "Favorited" : "Favorite";
+    favoriteBtn.classList.toggle("active", !!v.favorited);
+  }
+  updateReviewBtnLabel();
+  updateFavoriteBtnLabel();
+
+  reviewBtn.addEventListener("click", async () => {
+    const newValue = !v.marked_for_review;
+    const res = await fetch(`/api/videos/${videoId}/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ marked_for_review: newValue }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    v.marked_for_review = newValue;
+    updateReviewBtnLabel();
+    // Updated in place, deliberately NOT a full grid reload — reviewing a
+    // card mid-session shouldn't reshuffle the grid or disturb this open
+    // panel (see loadLibrary's preserveOrder).
+    const bubble = cardEl.querySelector(".unreviewed-corner-bubble");
+    if (bubble) bubble.classList.toggle("hidden", !newValue);
+    await refreshSpeciesData(); // badge counts shift; doesn't touch the current grid
+  });
+
+  favoriteBtn.addEventListener("click", async () => {
+    const whichTab = gridId === "lib-grid" ? "lib" : "fav";
+    const newValue = !v.favorited;
+    v.favorited = newValue;
+    updateFavoriteBtnLabel();
+    await toggleFavorite(videoId, newValue, whichTab);
+  });
+
   panelEl.querySelector(".card-info-close-btn").addEventListener("click", () => {
-    expandedCardByGrid[gridId] = null;
     collapseCardInfoPanel(gridId, true);
+  });
+
+  panelEl.querySelector(".card-info-delete-btn").addEventListener("click", async () => {
+    const ok = confirm(
+      `Delete "${v.filename}" from the library?\n\nThis only removes it from the library — the file on your computer is NOT deleted.`
+    );
+    if (!ok) return;
+    await deleteVideo(videoId);
+    await refreshSpeciesData(); // counts shift when a video disappears
+    removeLibraryCard(gridId, videoId);
   });
 
   const saveField = async (field, value) => {
@@ -1757,7 +1928,15 @@ async function toggleFavorite(videoId, favorited, whichTab) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ favorited }),
   });
-  if (whichTab === "lib") loadLibrary(); else loadFavorites();
+  // Library doesn't show favorited-status anywhere on the card itself
+  // (only in the expanded notes panel, already updated in place by the
+  // caller) — nothing else on screen depends on it, so no reload needed.
+  if (whichTab === "fav" && !favorited) {
+    // Un-favoriting on the Favorites tab means this card should disappear
+    // from view — remove just this one card instead of reloading the
+    // entire grid.
+    removeLibraryCard("fav-grid", videoId);
+  }
 }
 
 async function deleteVideo(videoId) {
@@ -1845,11 +2024,22 @@ function renderModalList(query) {
       }
 
       await refreshSpeciesData();
-      if (whichTab === "lib") {
-        loadLibrary(); // group counts refresh next time "Back to species" is clicked
+      const gridIdForTab = whichTab === "lib" ? "lib-grid" : "fav-grid";
+      if (whichTab === "fav") populateFilterDropdown("fav-species-filter");
+      const activeFilter = whichTab === "lib"
+        ? libraryActiveSpecies
+        : document.getElementById("fav-species-filter").value;
+
+      if (activeFilter && data.display_species !== activeFilter) {
+        removeLibraryCard(gridIdForTab, targetVideoId);
       } else {
-        populateFilterDropdown("fav-species-filter");
-        loadFavorites();
+        patchLibraryCardSpecies(gridIdForTab, targetVideoId, data.display_species);
+        if (!data.marked_for_review) {
+          const cardEl = findLibraryCardEl(gridIdForTab, targetVideoId);
+          const bubble = cardEl && cardEl.querySelector(".unreviewed-corner-bubble");
+          if (bubble) bubble.classList.add("hidden");
+        }
+        syncExpandedPanelReviewState(gridIdForTab, targetVideoId, data.marked_for_review);
       }
     });
 

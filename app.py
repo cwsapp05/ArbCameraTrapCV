@@ -189,6 +189,12 @@ _NEW_FIELD_DEFAULTS = {
 for _v in videos.values():
     for _key, _default in _NEW_FIELD_DEFAULTS.items():
         _v.setdefault(_key, _v.get("filename") if _key == "display_filename" else _default)
+    # marked_for_review is a new, independent flag (see /api/videos/<id>/correct
+    # and /update) — existing entries default based on their CURRENT reviewed
+    # status (matches what the unreviewed bubble already showed for them)
+    # rather than a flat value, so this migration doesn't suddenly flag every
+    # already-confirmed video as needing review again.
+    _v.setdefault("marked_for_review", not bool(_v.get("corrected_species")))
 
 if jobs:
     _seq_counter = max((j.get("seq", 0) for j in jobs.values()), default=0)
@@ -443,6 +449,7 @@ def sync_videos_from_job(job_id):
                 "ai_detector_conf": round(ai_det_conf, 2) if ai_det_conf is not None else None,
                 "corrected_species": existing.get("corrected_species"),
                 "favorited": existing.get("favorited", False),
+                "marked_for_review": existing.get("marked_for_review", True),
                 "corrected_at": existing.get("corrected_at"),
                 **ocr_fields,
                 "count": existing.get("count", 1),
@@ -1081,6 +1088,11 @@ def correct_species(video_id):
         # empty string clears the correction, reverting to the AI's own tag
         videos[video_id]["corrected_species"] = species or None
         videos[video_id]["corrected_at"] = datetime.now().isoformat(timespec="seconds")
+        if species:
+            # Confirming a species is itself an act of reviewing — clears the
+            # mark. Clearing a correction (empty species) is more of an
+            # "undo" than a review, so it deliberately leaves the mark as-is.
+            videos[video_id]["marked_for_review"] = False
         record = dict(videos[video_id])
     save_videos_index()
     return jsonify({**record, "display_species": display_species(record)})
@@ -1089,14 +1101,18 @@ def correct_species(video_id):
 @app.route("/api/videos/<video_id>/update", methods=["POST"])
 def update_video_metadata(video_id):
     """
-    Edits Date, Time, Location, Diel Period, Temperature, Count, Notes, and/or
-    File Name. Any subset of these can be sent — only the provided keys are
-    changed. Editing date/time/location/diel_period/temperature marks the
-    video as manually edited, which freezes ALL FIVE against being
-    overwritten by OCR if this job is ever re-synced (see sync_videos_from_job).
+    Edits Date, Time, Location, Diel Period, Temperature, Count, Notes,
+    File Name, and/or the Marked-for-review flag. Any subset of these can be
+    sent — only the provided keys are changed. Editing
+    date/time/location/diel_period/temperature marks the video as manually
+    edited, which freezes ALL FIVE against being overwritten by OCR if this
+    job is ever re-synced (see sync_videos_from_job).
     """
     data = request.get_json(force=True)
-    allowed_fields = {"date", "time", "location", "diel_period", "temperature", "count", "notes", "display_filename"}
+    allowed_fields = {
+        "date", "time", "location", "diel_period", "temperature", "count", "notes",
+        "display_filename", "marked_for_review",
+    }
     updates = {k: v for k, v in data.items() if k in allowed_fields}
 
     if "count" in updates:
@@ -1107,6 +1123,9 @@ def update_video_metadata(video_id):
         if count < 0:
             return jsonify({"error": "Count can't be negative"}), 400
         updates["count"] = count
+
+    if "marked_for_review" in updates:
+        updates["marked_for_review"] = bool(updates["marked_for_review"])
 
     with videos_lock:
         if video_id not in videos:
@@ -1142,6 +1161,18 @@ def delete_video(video_id):
     crop_path.unlink(missing_ok=True)
 
     return jsonify({"deleted": video_id})
+
+
+@app.route("/api/videos/clear-all-marks", methods=["POST"])
+def clear_all_review_marks():
+    """Clears marked_for_review on every video at once — the Settings tab's
+    bulk 'clear all marked for review' action."""
+    with videos_lock:
+        cleared_count = sum(1 for v in videos.values() if v.get("marked_for_review"))
+        for v in videos.values():
+            v["marked_for_review"] = False
+    save_videos_index()
+    return jsonify({"cleared_count": cleared_count})
 
 
 @app.route("/api/videos/<video_id>/bar-crop")

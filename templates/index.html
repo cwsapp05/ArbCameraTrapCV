@@ -252,6 +252,12 @@
       <label>OCR setting presets</label>
       <div id="ocr-presets-list" class="ocr-presets-list"></div>
     </div>
+
+    <div class="settings-section">
+      <label>Review marks</label>
+      <p class="settings-section-hint">Clears the "marked for review" flag on every video at once — they'll no longer count toward the review badge or appear in the Review tab queue unless re-marked individually.</p>
+      <button type="button" id="clear-all-marks-btn" class="secondary-btn">Clear all marked for review</button>
+    </div>
   </section>
 </div>
 
@@ -299,9 +305,7 @@
           </span>
         </div>
         <div class="card-actions">
-          <button class="favorite-btn" title="Favorite">☆</button>
           <button class="notes-btn" title="Count / Notes">📝</button>
-          <button class="delete-btn" title="Delete from library">🗑️</button>
         </div>
       </div>
       <div class="correction-row">
@@ -318,6 +322,10 @@
 <template id="card-info-panel-template">
   <div class="card-info-panel">
     <button class="card-info-close-btn" title="Close">✕</button>
+    <div class="card-info-toggle-row">
+      <button type="button" class="card-info-review-btn"></button>
+      <button type="button" class="card-info-favorite-btn"></button>
+    </div>
     <div class="card-info-field">
       <label>Count</label>
       <input type="number" class="card-info-count" min="0">
@@ -326,6 +334,7 @@
       <label>Notes</label>
       <textarea class="card-info-notes"></textarea>
     </div>
+    <button type="button" class="card-info-delete-btn" title="Delete from library">Delete</button>
   </div>
 </template>
 
