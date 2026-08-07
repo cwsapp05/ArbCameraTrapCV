@@ -44,6 +44,9 @@ RUNS_DIR = BASE_DIR / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
 BAR_CROPS_DIR = RUNS_DIR / "bar_crops"
 BAR_CROPS_DIR.mkdir(exist_ok=True)
+
+THUMBNAILS_DIR = RUNS_DIR / "thumbnails"
+THUMBNAILS_DIR.mkdir(exist_ok=True)
 JOBS_INDEX_FILE = RUNS_DIR / "jobs_index.json"
 VIDEOS_INDEX_FILE = RUNS_DIR / "videos_index.json"
 SPECIES_LIST_FILE = RUNS_DIR / "species_list.json"
@@ -184,7 +187,7 @@ _NEW_FIELD_DEFAULTS = {
     "date": None, "time": None, "location": None, "diel_period": None,
     "temperature": None,
     "count": 1, "notes": "", "display_filename": None, "metadata_edited": False,
-    "has_bar_crop": False, "media_type": "video",
+    "has_bar_crop": False, "media_type": "video", "has_thumbnail": False,
 }
 for _v in videos.values():
     for _key, _default in _NEW_FIELD_DEFAULTS.items():
@@ -351,8 +354,54 @@ def save_bar_crop_safe(folder, filename, video_id, bar_box, ref_width=None, ref_
         return False
 
 
+def save_best_frame_thumbnail(video_path, video_id, frame_number):
+    """
+    Saves ONE specific frame from a video as a JPEG thumbnail to
+    THUMBNAILS_DIR — used by the Library/Favorites grid so cards can show a
+    still image instead of rendering an actual <video> element for every
+    card at once. frame_number is a 0-based frame index to seek directly
+    to (see run_bar_ocr_safe's caller in sync_videos_from_job: this is
+    normally the exact frame that produced the highest-confidence
+    classification for the video's predicted species, taken straight from
+    predictions.json's per-detection frame_number field — no need to
+    re-scan the video ourselves to find it).
+
+    Never raises — one bad clip shouldn't take down the whole job's sync.
+    Returns True/False for whether it succeeded.
+    """
+    try:
+        video_path = Path(video_path)
+        if not video_path.is_file():
+            return False
+        cap = cv2.VideoCapture(str(video_path))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_number))
+        ok, frame = cap.read()
+        cap.release()
+        if not ok:
+            return False
+        output_path = THUMBNAILS_DIR / f"{video_id}.jpg"
+        cv2.imwrite(str(output_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        return True
+    except Exception as e:
+        print(f"Thumbnail extraction failed for {video_path}: {e}")
+        return False
+
+
 def video_id_for(job_id, filename):
     return hashlib.sha1(f"{job_id}:{filename}".encode()).hexdigest()[:16]
+
+
+def _bbox_touches_edge(bbox, margin=0.02):
+    """
+    True if a normalized [x, y, width, height] detection bounding box
+    touches or extends past the video frame's edge (within a small
+    tolerance margin, to allow for minor detection imprecision right at
+    the boundary without being overly strict). Used when picking a
+    thumbnail frame — a detection like this means the animal is partially
+    cut off in that particular frame.
+    """
+    x, y, w, h = bbox
+    return x <= margin or y <= margin or (x + w) >= (1.0 - margin) or (y + h) >= (1.0 - margin)
 
 
 def sync_videos_from_job(job_id):
@@ -395,7 +444,8 @@ def sync_videos_from_job(job_id):
         filename = img.get("file", "?")
         dets = img.get("detections", [])
 
-        species_best = {}  # label -> (classifier_conf, detector_conf)
+        species_best = {}  # label -> (classifier_conf, detector_conf, frame_number) — determines the predicted species/confidence, unchanged by the thumbnail logic below
+        species_frame_candidates = {}  # label -> [(classifier_conf, frame_number, bbox), ...] — every detection, used only to pick a well-framed thumbnail
         for d in dets:
             if "classifications" not in d:
                 continue
@@ -404,13 +454,32 @@ def sync_videos_from_job(job_id):
             if label == "blank":
                 continue
             if label not in species_best or cls_conf > species_best[label][0]:
-                species_best[label] = (cls_conf, d.get("conf", 0))
+                species_best[label] = (cls_conf, d.get("conf", 0), d.get("frame_number"))
+            species_frame_candidates.setdefault(label, []).append(
+                (cls_conf, d.get("frame_number"), d.get("bbox"))
+            )
 
-        ai_species, ai_conf, ai_det_conf = None, None, None
+        ai_species, ai_conf, ai_det_conf, best_frame_number = None, None, None, None
         if species_best:
-            ai_species, (ai_conf, ai_det_conf) = max(
+            ai_species, (ai_conf, ai_det_conf, best_frame_number) = max(
                 species_best.items(), key=lambda kv: kv[1][0]
             )
+
+            # For the THUMBNAIL specifically (not the species/confidence
+            # above, which stay exactly as computed), prefer a frame where
+            # the animal is fully within the video frame. Classification
+            # confidence alone doesn't capture framing — a detection whose
+            # box touches the edge (animal partially cut off) can still
+            # score marginally higher than a fully-in-frame alternative a
+            # few frames later (e.g. slightly less motion blur, or a
+            # tighter close-up of just-visible fur/features), even though
+            # it makes a visibly worse thumbnail. Falls back to the
+            # highest-confidence frame if every candidate is edge-clipped.
+            candidates = species_frame_candidates.get(ai_species, [])
+            fully_in_frame = [c for c in candidates if c[2] and not _bbox_touches_edge(c[2])]
+            pool = fully_in_frame if fully_in_frame else candidates
+            if pool:
+                _, best_frame_number, _ = max(pool, key=lambda c: c[0])
 
         vid = video_id_for(job_id, filename)
         job_ocr_config = _resolve_ocr_config(job.get("ocr_config"))
@@ -418,6 +487,19 @@ def sync_videos_from_job(job_id):
         ref_width = job_ocr_config.get("ref_width") if job_ocr_config else None
         ref_height = job_ocr_config.get("ref_height") if job_ocr_config else None
         has_bar_crop = save_bar_crop_safe(job["folder"], filename, vid, bar_box, ref_width, ref_height)
+
+        # Thumbnails only apply to videos — a photo already IS a single
+        # still image, cheap to display directly with no need to extract
+        # anything from it. Prefer the frame that produced the winning
+        # species classification (best_frame_number, from predictions.json);
+        # fall back to the first frame when there was no confident
+        # detection at all (a "blank" clip), so every video still gets
+        # SOME thumbnail rather than none.
+        has_thumbnail = False
+        if media_type_for_filename(filename) == "video":
+            frame_for_thumbnail = best_frame_number if best_frame_number is not None else 0
+            video_path = Path(job["folder"]) / filename
+            has_thumbnail = save_best_frame_thumbnail(video_path, vid, frame_for_thumbnail)
 
         with videos_lock:
             existing = videos.get(vid, {})
@@ -457,6 +539,7 @@ def sync_videos_from_job(job_id):
                 "display_filename": existing.get("display_filename", filename),
                 "metadata_edited": existing.get("metadata_edited", False),
                 "has_bar_crop": has_bar_crop,
+                "has_thumbnail": has_thumbnail,
             }
     save_videos_index()
 
@@ -1187,6 +1270,22 @@ def serve_bar_crop(video_id):
     if not crop_path.is_file():
         abort(404)
     return send_from_directory(str(BAR_CROPS_DIR), f"{video_id}.png")
+
+
+@app.route("/api/videos/<video_id>/thumbnail")
+def serve_thumbnail(video_id):
+    """Serves the saved best-frame thumbnail for one video (see
+    save_best_frame_thumbnail in sync_videos_from_job) — the Library/
+    Favorites grid uses this instead of rendering an actual <video> element
+    for every card at once."""
+    with videos_lock:
+        record = videos.get(video_id)
+    if not record:
+        abort(404)
+    thumb_path = THUMBNAILS_DIR / f"{video_id}.jpg"
+    if not thumb_path.is_file():
+        abort(404)
+    return send_from_directory(str(THUMBNAILS_DIR), f"{video_id}.jpg")
 
 
 @app.route("/media/<video_id>")

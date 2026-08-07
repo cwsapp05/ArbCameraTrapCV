@@ -335,6 +335,7 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   aspect-ratio: 16 / 9;
   background: black;
   display: block;
+  cursor: pointer;
 }
 
 .video-card video.clickable-video { cursor: pointer; }
@@ -345,6 +346,35 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   object-fit: cover;
   background: black;
   display: block;
+  cursor: pointer;
+}
+
+.card-video-thumb-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: black;
+  cursor: pointer;
+}
+.card-video-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.card-play-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none; /* purely a visual affordance — the whole card's 📝 button drives expansion, not a click here */
 }
 
 .video-card-body { padding: 0.7rem 0.8rem; }
@@ -478,25 +508,14 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 .card-zoom-btn:hover { background: rgba(0, 0, 0, 0.65); }
 
-.notes-btn {
-  background: none;
-  border: none;
-  font-size: 1rem;
-  padding: 0 0.2rem;
-  line-height: 1;
-  opacity: 0.75;
-}
-.notes-btn:hover { background: none; opacity: 1; }
-.notes-btn.active { opacity: 1; }
-
-.card-actions { display: flex; align-items: center; gap: 0.3rem; }
-
-/* Expanded card + its adjacent info panel (see .notes-btn / .card-info-panel).
-   These live inside a full-row wrapper (.expanded-row-wrapper) rather than
-   being spaced via grid-column spans directly on the outer auto-fill grid —
-   that grid's column COUNT changes with screen width, so "3 columns + 2
-   columns" wouldn't reliably add up to the full row width at every size;
-   a dedicated full-width wrapper with an internal 3:2 flex split does. */
+/* Expanded card + its adjacent info panel (see .video-card[data-video-id] /
+   .card-info-panel — expansion is now triggered by clicking the card's
+   media directly, see renderGrid). These live inside a full-row wrapper
+   (.expanded-row-wrapper) rather than being spaced via grid-column spans
+   directly on the outer auto-fill grid — that grid's column COUNT changes
+   with screen width, so "3 columns + 2 columns" wouldn't reliably add up
+   to the full row width at every size; a dedicated full-width wrapper with
+   an internal 3:2 flex split does. */
 .expanded-row-wrapper {
   grid-column: 1 / -1; /* the entire row, regardless of how many columns exist */
   display: flex;
@@ -1350,6 +1369,21 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   flex-direction: column;
   gap: 0.5rem;
   padding-right: 0.2rem; /* keeps cards clear of the scrollbar */
+}
+
+.track-media-list-empty {
+  width: 300px;
+  flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1.5rem;
+  box-sizing: border-box;
+  border: 1px dashed #e2e5ea;
+  border-radius: 10px;
+  font-size: 0.85rem;
 }
 
 .track-media-card {

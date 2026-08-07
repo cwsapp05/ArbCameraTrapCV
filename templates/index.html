@@ -224,8 +224,8 @@
         <button type="button" id="track-missing-overlay" class="track-missing-overlay hidden"></button>
       </div>
       <div id="track-media-list" class="track-media-list"></div>
+      <div id="track-map-empty" class="track-media-list-empty muted hidden">Entries will appear here and their locations will be displayed on the map once you have an entry with location data.</div>
     </div>
-    <div id="track-map-empty" class="muted hidden">No locations have coordinates yet — click "Manage Locations" to add some.</div>
   </section>
 
   <!-- SETTINGS TAB -->
@@ -292,8 +292,14 @@
         <line x1="21" y1="21" x2="15.5" y2="15.5"></line>
       </svg>
     </button>
-    <video controls preload="metadata" class="hidden"></video>
+    <video controls preload="none" class="hidden"></video>
     <img class="card-photo hidden" alt="">
+    <div class="card-video-thumb-wrap hidden">
+      <img class="card-video-thumb" alt="">
+      <div class="card-play-overlay">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="white"><path d="M8 5v14l11-7z"/></svg>
+      </div>
+    </div>
     <div class="video-card-body">
       <div class="video-filename"></div>
       <div class="video-tag-row">
@@ -304,9 +310,6 @@
             <span class="verified-info-tooltip">Verified by: Connor Sapp</span>
           </span>
         </div>
-        <div class="card-actions">
-          <button class="notes-btn" title="Count / Notes">📝</button>
-        </div>
       </div>
       <div class="correction-row">
         <select class="correction-select"></select>
@@ -316,7 +319,8 @@
   </div>
 </template>
 
-<!-- Card info panel: appears next to an expanded card (see .notes-btn),
+<!-- Card info panel: appears next to an expanded card (triggered by
+     clicking the card's media directly — see renderGrid's triggerExpand),
      holding the Count/Notes fields, matching that card's stretched height
      via CSS Grid's default row-stretching behavior. -->
 <template id="card-info-panel-template">
@@ -362,8 +366,6 @@
   <button id="ctx-copy-all-btn">Copy entire table</button>
   <button id="ctx-delete-btn" class="menu-delete-btn">Delete</button>
 </div>
-
-<!-- Library Settings modal, opened via the gear icon on the group view -->
 
 <!-- Location management: fill in coordinates for locations missing them,
      rename a location, or merge several location names into one. All

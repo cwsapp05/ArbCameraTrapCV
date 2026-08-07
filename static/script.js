@@ -1197,7 +1197,7 @@ function renderLibraryGroupCards() {
   if (visibleSpecies.length === 0) {
     empty.classList.remove("hidden");
     empty.textContent = speciesWithClips.length > 0
-      ? "All groups are hidden — check Library Settings (⚙️) to unhide some."
+      ? "All groups are hidden — check the Settings tab to unhide some."
       : "No videos processed yet.";
     return;
   }
@@ -1478,8 +1478,7 @@ function syncExpandedPanelReviewState(gridId, videoId, markedForReview) {
 
 function findLibraryCardEl(gridId, videoId) {
   const grid = document.getElementById(gridId);
-  const notesBtn = grid.querySelector(`.notes-btn[data-video-id="${videoId}"]`);
-  return notesBtn ? notesBtn.closest(".video-card") : null;
+  return grid.querySelector(`.video-card[data-video-id="${videoId}"]`);
 }
 
 function removeLibraryCard(gridId, videoId) {
@@ -1633,14 +1632,29 @@ function renderGrid(videos, gridId, emptyId) {
     const videoEl = card.querySelector("video");
     videoEl.addEventListener("play", handleGridVideoPlay);
     const photoEl = card.querySelector(".card-photo");
+    const thumbWrap = card.querySelector(".card-video-thumb-wrap");
+    const thumbImg = card.querySelector(".card-video-thumb");
     if (v.media_type === "photo") {
       photoEl.src = "/media/" + v.id;
       photoEl.classList.remove("hidden");
       videoEl.classList.add("hidden");
+      thumbWrap.classList.add("hidden");
+    } else if (v.has_thumbnail) {
+      // Video with an extracted thumbnail — show that instead of the real
+      // <video>, which only loads once the card is expanded (see
+      // expandCardInfoPanel/collapseCardInfoPanel).
+      thumbImg.src = "/api/videos/" + v.id + "/thumbnail";
+      thumbWrap.classList.remove("hidden");
+      photoEl.classList.add("hidden");
+      videoEl.classList.add("hidden");
     } else {
+      // No thumbnail available (an entry from before this feature existed,
+      // not yet re-synced) — fall back to rendering the video directly, as
+      // it always used to.
       videoEl.src = "/media/" + v.id;
       videoEl.classList.remove("hidden");
       photoEl.classList.add("hidden");
+      thumbWrap.classList.add("hidden");
     }
 
     const zoomBtn = card.querySelector(".card-zoom-btn");
@@ -1671,14 +1685,22 @@ function renderGrid(videos, gridId, emptyId) {
     }
 
     const whichTab = gridId === "lib-grid" ? "lib" : "fav";
+    const cardEl = card.querySelector(".video-card"); // grab this now, while the fragment still has its children
+    cardEl.dataset.videoId = v.id;
 
-    const notesBtn = card.querySelector(".notes-btn");
-    notesBtn.dataset.videoId = v.id;
-    notesBtn.addEventListener("click", (e) => {
+    function triggerExpand(e) {
       e.stopPropagation();
-      const cardEl = e.currentTarget.closest(".video-card");
+      // Already expanded — once expanded, a click on the video is handled
+      // exclusively by the play/pause toggle that expandCardInfoPanel
+      // attaches; without this guard, that same click would ALSO re-enter
+      // toggleCardInfoPanel and immediately close the panel that was just
+      // opened.
+      if (expandedCardByGrid[gridId] === v.id) return;
       toggleCardInfoPanel(v.id, gridId, cardEl, v);
-    });
+    }
+    photoEl.addEventListener("click", triggerExpand);
+    thumbWrap.addEventListener("click", triggerExpand);
+    videoEl.addEventListener("click", triggerExpand);
 
     const correctionSelect = card.querySelector(".correction-select");
     buildCorrectionOptions(correctionSelect, v);
@@ -1734,7 +1756,7 @@ function renderGrid(videos, gridId, emptyId) {
     const stillPresent = videos.find(v => v.id === expandedId);
     if (stillPresent) {
       const cardEl = [...grid.querySelectorAll(".video-card")].find(
-        c => c.querySelector(".notes-btn").dataset.videoId === expandedId
+        c => c.dataset.videoId === expandedId
       );
       if (cardEl) expandCardInfoPanel(expandedId, gridId, cardEl, stillPresent);
     } else {
@@ -1760,8 +1782,6 @@ function collapseCardInfoPanel(gridId, applyClosedTreatment = true) {
   const cardEl = wrapper.querySelector(".video-card");
   if (cardEl) {
     cardEl.classList.remove("expanded");
-    const btn = cardEl.querySelector(".notes-btn");
-    if (btn) btn.classList.remove("active");
     const videoEl = cardEl.querySelector("video");
     if (videoEl) {
       videoEl.pause();
@@ -1769,6 +1789,18 @@ function collapseCardInfoPanel(gridId, applyClosedTreatment = true) {
       videoEl.loop = false;
       videoEl.classList.remove("clickable-video");
       videoEl.removeEventListener("click", toggleVideoPlayPauseOnClick);
+
+      const thumbWrap = cardEl.querySelector(".card-video-thumb-wrap");
+      const thumbImg = thumbWrap && thumbWrap.querySelector(".card-video-thumb");
+      if (thumbImg && thumbImg.src) {
+        // A thumbnail exists for this card — revert to showing it, and
+        // fully release the loaded video (not just hide it) so it's
+        // genuinely not held in memory/network while collapsed.
+        videoEl.classList.add("hidden");
+        videoEl.removeAttribute("src");
+        videoEl.load();
+        thumbWrap.classList.remove("hidden");
+      }
     }
     wrapper.replaceWith(cardEl); // put the card back exactly where the wrapper was
 
@@ -1791,16 +1823,20 @@ function expandCardInfoPanel(videoId, gridId, cardEl, v) {
   wrapper.appendChild(cardEl); // card moves inside the wrapper
 
   cardEl.classList.add("expanded");
-  cardEl.querySelector(".notes-btn").classList.add("active");
 
   // Native browser controls sit directly over the burned-in info bar on
   // the video itself, obscuring it — for the enlarged view, replace them
   // with a minimal click-to-toggle + looping playback instead.
   const videoEl = cardEl.querySelector("video");
   if (videoEl && v.media_type !== "photo") {
+    if (!videoEl.src) {
+      videoEl.src = "/media/" + videoId; // lazy-load — only fetched now that it's actually being viewed
+    }
     videoEl.controls = false;
     videoEl.loop = true;
     videoEl.classList.add("clickable-video");
+    videoEl.classList.remove("hidden");
+    cardEl.querySelector(".card-video-thumb-wrap")?.classList.add("hidden");
     videoEl.addEventListener("click", toggleVideoPlayPauseOnClick);
   }
 
@@ -2925,15 +2961,18 @@ async function refreshTrackMapAndBadge() {
 function renderTrackMap(allLocations) {
   const entries = Object.entries(allLocations);
   const emptyMsg = document.getElementById("track-map-empty");
-  const mapEl = document.getElementById("track-map");
+  const mediaList = document.getElementById("track-media-list");
 
+  // The map itself always renders now, even with zero locations — only the
+  // right-side panel (media list vs. this empty message) toggles based on
+  // whether there's any location data yet.
   if (entries.length === 0) {
     emptyMsg.classList.remove("hidden");
-    mapEl.classList.add("hidden");
-    return;
+    mediaList.classList.add("hidden");
+  } else {
+    emptyMsg.classList.add("hidden");
+    mediaList.classList.remove("hidden");
   }
-  emptyMsg.classList.add("hidden");
-  mapEl.classList.remove("hidden");
 
   if (!trackMap) {
     trackMap = L.map("track-map");
@@ -2946,18 +2985,24 @@ function renderTrackMap(allLocations) {
   Object.values(trackMapMarkersByName).forEach(m => trackMap.removeLayer(m));
   trackMapMarkersByName = {};
 
-  const bounds = [];
-  entries.forEach(([name, coords]) => {
-    const marker = L.marker([coords.lat, coords.lon]).addTo(trackMap);
-    marker.bindPopup(name);
-    trackMapMarkersByName[name] = marker;
-    bounds.push([coords.lat, coords.lon]);
-  });
-
-  if (bounds.length === 1) {
-    trackMap.setView(bounds[0], 15);
+  if (entries.length === 0) {
+    // Nothing to fit bounds to yet — a reasonable generic world view rather
+    // than an undefined viewport.
+    trackMap.setView([20, 0], 2);
   } else {
-    trackMap.fitBounds(bounds, { padding: [30, 30] });
+    const bounds = [];
+    entries.forEach(([name, coords]) => {
+      const marker = L.marker([coords.lat, coords.lon]).addTo(trackMap);
+      marker.bindPopup(name);
+      trackMapMarkersByName[name] = marker;
+      bounds.push([coords.lat, coords.lon]);
+    });
+
+    if (bounds.length === 1) {
+      trackMap.setView(bounds[0], 15);
+    } else {
+      trackMap.fitBounds(bounds, { padding: [30, 30] });
+    }
   }
 
   // Leaflet sizes itself off the container's CURRENT visible dimensions —
