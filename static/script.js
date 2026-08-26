@@ -42,6 +42,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
       pollQueue();
       loadUploadHistory();
       loadOcrConfigOptions();
+      loadUploadLocationOptions();
     } else {
       clearTimeout(queuePollTimer);
     }
@@ -78,21 +79,39 @@ document.getElementById("browse-btn").addEventListener("click", async () => {
   const data = await res.json();
   if (data.folder) {
     folderInput.value = data.folder;
-    runBtn.disabled = false;
+    updateRunBtnState();
   }
 });
 
+function updateRunBtnState() {
+  const folder = folderInput.value;
+  const location = document.getElementById("upload-location-select").value;
+  runBtn.disabled = !folder || !location || location === ADD_LOCATION_VALUE;
+}
+
 runBtn.addEventListener("click", async () => {
   const folder = folderInput.value;
-  const country = document.getElementById("country").value;
-  const state = document.getElementById("state").value;
   const ocrConfig = document.getElementById("ocr-config-select").value;
-  const confirmationEl = document.getElementById("submit-confirmation");
 
-  if (ocrConfig === CONFIGURE_NEW_VALUE) {
-    alert("Finish configuring OCR settings first — click the OCR Settings dropdown to reopen the wizard.");
+  if (ocrConfig === CONFIGURE_NEW_VALUE && !ocrGloballyDisabled) {
+    if (!folder) {
+      alert('Select a folder first — the OCR wizard needs a sample video from that folder.');
+      return;
+    }
+    // Wizard now opens from here rather than from the dropdown itself —
+    // once it saves successfully, saveOcrWizardConfig submits the job
+    // automatically (see its autoSubmitAfterSave handling).
+    openOcrConfigWizard(folder, { autoSubmitAfterSave: true });
     return;
   }
+
+  await submitProcessingJob(ocrConfig);
+});
+
+async function submitProcessingJob(ocrConfig) {
+  const folder = folderInput.value;
+  const location = document.getElementById("upload-location-select").value;
+  const confirmationEl = document.getElementById("submit-confirmation");
 
   runBtn.disabled = true;
   confirmationEl.classList.remove("hidden");
@@ -101,10 +120,10 @@ runBtn.addEventListener("click", async () => {
   const res = await fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ folder, country, state, ocr_config: ocrConfig }),
+    body: JSON.stringify({ folder, location, ocr_config: ocrConfig }),
   });
   const data = await res.json();
-  runBtn.disabled = false;
+  updateRunBtnState();
 
   if (data.error) {
     confirmationEl.textContent = "Error: " + data.error;
@@ -117,14 +136,133 @@ runBtn.addEventListener("click", async () => {
 
   pollQueue(); // refresh immediately rather than waiting for the next tick
   loadUploadHistory();
+}
+
+// ==================== Upload tab: Location field ====================
+const ADD_LOCATION_VALUE = "__add_new_location__";
+let uploadLocationPreviousValue = "";
+
+async function loadUploadLocationOptions() {
+  const res = await fetch("/api/locations");
+  const allLocations = await res.json();
+  const select = document.getElementById("upload-location-select");
+  const previousValue = select.value; // preserve the selection across refreshes if it's still valid
+
+  select.innerHTML = "";
+  const placeholderOpt = document.createElement("option");
+  placeholderOpt.value = "";
+  placeholderOpt.textContent = "Select a location…";
+  placeholderOpt.disabled = true;
+  select.appendChild(placeholderOpt);
+
+  Object.keys(allLocations).sort().forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+
+  const addOpt = document.createElement("option");
+  addOpt.value = ADD_LOCATION_VALUE;
+  addOpt.textContent = "+ Add new location";
+  select.appendChild(addOpt);
+
+  select.value = (previousValue && Object.prototype.hasOwnProperty.call(allLocations, previousValue))
+    ? previousValue
+    : "";
+  uploadLocationPreviousValue = select.value;
+  updateRunBtnState();
+}
+
+document.getElementById("upload-location-select").addEventListener("change", (e) => {
+  if (e.target.value === ADD_LOCATION_VALUE) {
+    openAddLocationModal();
+    return;
+  }
+  uploadLocationPreviousValue = e.target.value;
+  updateRunBtnState();
+});
+
+function openAddLocationModal() {
+  document.getElementById("add-location-modal-name").value = "";
+  document.getElementById("add-location-modal-lat").value = "";
+  document.getElementById("add-location-modal-lon").value = "";
+  document.getElementById("add-location-modal").classList.remove("hidden");
+}
+
+document.getElementById("add-location-modal-close-btn").addEventListener("click", () => {
+  document.getElementById("add-location-modal").classList.add("hidden");
+  // Revert — "+ Add new location" itself is never a valid selection.
+  document.getElementById("upload-location-select").value = uploadLocationPreviousValue;
+  updateRunBtnState();
+});
+
+document.getElementById("add-location-modal-save-btn").addEventListener("click", async () => {
+  const name = document.getElementById("add-location-modal-name").value.trim();
+  const lat = document.getElementById("add-location-modal-lat").value;
+  const lon = document.getElementById("add-location-modal-lon").value;
+
+  if (!name) {
+    alert("Name is required.");
+    return;
+  }
+  if (lat === "" || lon === "") {
+    alert("Latitude and longitude are required.");
+    return;
+  }
+
+  const res = await fetch("/api/locations/merge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source_names: [], // brand new — nothing to reassign videos from
+      target_name: name,
+      lat: parseFloat(lat),
+      lon: parseFloat(lon),
+    }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+
+  document.getElementById("add-location-modal").classList.add("hidden");
+  await loadUploadLocationOptions();
+  document.getElementById("upload-location-select").value = name;
+  uploadLocationPreviousValue = name;
+  updateRunBtnState();
 });
 
 // ==================== OCR Settings (dropdown + configuration wizard) ====================
-const SKIP_OCR_VALUE = "__skip_ocr__";
+const SKIP_OCR_VALUE = "__skip_ocr__"; // still used internally when OCR is globally disabled — see loadOcrDisabledState
 const CONFIGURE_NEW_VALUE = "__configure_new__";
 const OCR_WIZARD_MAX_DISPLAY_WIDTH = 640;
 
 let ocrPreviousSelectValue = null;
+let ocrGloballyDisabled = false; // mirrors the Settings tab's Disable OCR toggle — guards runBtn against opening the wizard when the dropdown is hidden
+
+function applyOcrDisabledUI(disabled) {
+  ocrGloballyDisabled = disabled;
+  document.getElementById("upload-ocr-field-wrap").classList.toggle("hidden", disabled);
+
+  const toggle = document.getElementById("ocr-disable-toggle");
+  toggle.classList.toggle("active", disabled);
+  toggle.setAttribute("aria-checked", disabled ? "true" : "false");
+
+  document.getElementById("ocr-presets-subsection").classList.toggle("disabled", disabled);
+}
+
+document.getElementById("ocr-disable-toggle").addEventListener("click", async () => {
+  const newValue = !ocrGloballyDisabled;
+  const res = await fetch("/api/ocr-configs/disabled", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ disabled: newValue }),
+  });
+  const data = await res.json();
+  applyOcrDisabledUI(data.disabled);
+});
 
 async function loadOcrConfigOptions() {
   const res = await fetch("/api/ocr-configs");
@@ -139,40 +277,30 @@ async function loadOcrConfigOptions() {
     select.appendChild(opt);
   });
 
-  const skipOpt = document.createElement("option");
-  skipOpt.value = SKIP_OCR_VALUE;
-  skipOpt.textContent = "None (manually add date/time/etc. in Spreadsheet)";
-  select.appendChild(skipOpt);
-
   const newOpt = document.createElement("option");
   newOpt.value = CONFIGURE_NEW_VALUE;
   newOpt.textContent = "+ Configure new";
   select.appendChild(newOpt);
 
-  if (data.last_used === SKIP_OCR_VALUE) {
-    select.value = SKIP_OCR_VALUE;
+  if (data.configs.length === 0) {
+    // No presets configured at all yet — default straight to Configure New
+    // rather than leaving the dropdown on an option that doesn't exist.
+    select.value = CONFIGURE_NEW_VALUE;
   } else if (data.last_used && data.configs.includes(data.last_used)) {
     select.value = data.last_used;
   } else {
-    // No valid last-used config (fresh install, or last-used config was
-    // deleted) — default to Skip OCR rather than silently picking whatever
-    // config happens to sort first.
-    select.value = SKIP_OCR_VALUE;
+    // Last-used preset was removed or never set, but presets DO exist —
+    // fall back to whichever sorts first rather than Configure New, since
+    // there's already something usable to select.
+    select.value = data.configs[0];
   }
   ocrPreviousSelectValue = select.value;
+
+  await applyOcrDisabledUI(data.disabled);
 }
 
 document.getElementById("ocr-config-select").addEventListener("change", (e) => {
-  if (e.target.value === CONFIGURE_NEW_VALUE) {
-    if (!folderInput.value) {
-      alert('Select a folder first, then choose "+ Configure new" — the wizard needs a sample video from that folder.');
-      e.target.value = ocrPreviousSelectValue;
-      return;
-    }
-    openOcrConfigWizard(folderInput.value);
-  } else {
-    ocrPreviousSelectValue = e.target.value;
-  }
+  ocrPreviousSelectValue = e.target.value;
 });
 
 // ---- Wizard state ----
@@ -215,7 +343,7 @@ function isInsideRect(pos, rect) {
   return pos.x >= rect.left && pos.x <= rect.right && pos.y >= rect.top && pos.y <= rect.bottom;
 }
 
-function openOcrConfigWizard(folder) {
+function openOcrConfigWizard(folder, options = {}) {
   ocrWizardState = {
     folder,
     step: 1,
@@ -224,6 +352,7 @@ function openOcrConfigWizard(folder) {
     croppedCanvas: null,
     sampleFilename: null, // which file the sample frame actually came from (backend may skip corrupted files)
     sampleObjectUrl: null,
+    autoSubmitAfterSave: !!options.autoSubmitAfterSave,
   };
   document.getElementById("ocr-wizard-modal").classList.remove("hidden");
   loadOcrWizardFrame();
@@ -664,7 +793,7 @@ async function renderOcrWizardReview() {
   container.appendChild(cropCanvas);
 
   const readingEls = {};
-  ["Date", "Time", "Temperature", "Location"].forEach(label => {
+  ["Date", "Time", "Temperature"].forEach(label => {
     const row = document.createElement("div");
     row.className = "ocr-wizard-preview-row";
 
@@ -710,7 +839,6 @@ async function renderOcrWizardReview() {
     setReading("Date", data.date);
     setReading("Time", data.time);
     setReading("Temperature", data.temperature);
-    setReading("Location", data.location);
   } catch (e) {
     Object.values(readingEls).forEach(el => { el.textContent = "Couldn't fetch OCR reading"; });
   }
@@ -751,6 +879,7 @@ async function saveOcrWizardConfig() {
     return;
   }
   const state = ocrWizardState;
+  const autoSubmit = state.autoSubmitAfterSave;
   const toArray = (box) => box ? [box.left, box.top, box.right, box.bottom] : null;
 
   const res = await fetch("/api/ocr-configs", {
@@ -775,6 +904,10 @@ async function saveOcrWizardConfig() {
   await loadOcrConfigOptions();
   document.getElementById("ocr-config-select").value = name;
   ocrPreviousSelectValue = name;
+
+  if (autoSubmit) {
+    await submitProcessingJob(name);
+  }
 }
 
 // ---- Queue panel + live log (Upload tab) ----
@@ -956,16 +1089,21 @@ function renderReviewCard() {
   const empty = document.getElementById("review-empty");
   const content = document.getElementById("review-content");
   const progress = document.getElementById("review-progress");
+  const progressCard = document.getElementById("review-progress-card");
 
   if (reviewQueue.length === 0) {
     empty.classList.remove("hidden");
     content.classList.add("hidden");
     progress.textContent = "";
+    // Hide the whole card, not just its text — clearing the text alone
+    // left an empty bordered box sitting on the page.
+    progressCard.classList.add("hidden");
     return;
   }
 
   empty.classList.add("hidden");
   content.classList.remove("hidden");
+  progressCard.classList.remove("hidden");
 
   const v = reviewQueue[reviewIndex];
   progress.textContent = `Reviewing ${reviewIndex + 1} of ${reviewQueue.length}`;
@@ -1249,6 +1387,21 @@ function loadSettingsTab() {
   renderOcrPresetsList();
   updateSettingsTempUnitButtons();
   resetClearAllMarksBtn();
+
+  // Clear any leftover CSV-import result note (and a pending overwrite
+  // confirmation) from a previous visit. Done here rather than in
+  // loadLocationsSection, which also runs as a mid-flow refresh right
+  // after an import — clearing there would wipe the note the moment it
+  // was shown.
+  const importResult = document.getElementById("locations-import-result");
+  importResult.textContent = "";
+  importResult.classList.add("hidden");
+  importResult.classList.remove("error");
+  document.getElementById("locations-import-confirm").classList.add("hidden");
+  pendingImportRows = null;
+  pendingImportSkipped = [];
+
+  loadLocationsSection();
 }
 
 let clearAllMarksTimeout = null;
@@ -1386,6 +1539,7 @@ async function renderOcrPresetsList() {
 
   const res = await fetch("/api/ocr-configs");
   const data = await res.json();
+  applyOcrDisabledUI(data.disabled);
 
   if (data.configs.length === 0) {
     const emptyMsg = document.createElement("div");
@@ -2091,6 +2245,7 @@ if (document.getElementById("tab-upload").classList.contains("active")) {
   pollQueue();
   loadUploadHistory();
   loadOcrConfigOptions();
+  loadUploadLocationOptions();
 }
 refreshSpeciesData(); // populates the Library tab's unreviewed-count badge immediately, not just after visiting the tab
 
@@ -2182,6 +2337,7 @@ function fileExtensionOf(name) {
 }
 
 let spreadsheetVideos = [];        // raw data from the last /api/videos fetch
+let spreadsheetLocationsCache = {}; // name -> {lat, lon}, for the location cell's coordinate tooltip
 let spreadsheetSearch = "";
 let spreadsheetSorts = [];         // stacked sort levels: [{field, dir}, ...] — applied in order, each a tie-break for the previous
 
@@ -2223,8 +2379,12 @@ function spreadsheetRowValues(v) {
 }
 
 async function loadSpreadsheet() {
-  const res = await fetch("/api/videos");
-  spreadsheetVideos = await res.json();
+  const [videosRes, locationsRes] = await Promise.all([
+    fetch("/api/videos"),
+    fetch("/api/locations"),
+  ]);
+  spreadsheetVideos = await videosRes.json();
+  spreadsheetLocationsCache = await locationsRes.json();
   applySpreadsheetView();
 }
 
@@ -2399,6 +2559,15 @@ function renderSpreadsheet(videos) {
       td.className = "editable";
       td.dataset.field = field;
       td.textContent = values[field];
+
+      if (field === "location" && v.location) {
+        const coords = spreadsheetLocationsCache[v.location];
+        if (coords && coords.lat !== null && coords.lat !== undefined) {
+          td.dataset.tooltip = `${coords.lat}, ${coords.lon}`;
+        } else {
+          td.dataset.tooltip = "No coordinates yet";
+        }
+      }
 
       if (field === "species") {
         // Text truncation happens on this inner span, not the td itself —
@@ -2933,7 +3102,6 @@ document.getElementById("export-csv-btn")?.addEventListener("click", exportSprea
 
 // ==== Track tab ====
 let trackMap = null;
-let locationSelectionOrder = []; // row elements, in the order their checkboxes were checked (not DOM/table order)
 let trackMapMarkersByName = {}; // location name -> Leaflet marker, for hover-highlighting from the media list
 
 async function loadTrackTab() {
@@ -3109,7 +3277,6 @@ function renderTrackMediaCards(relevant) {
     cardEl.querySelector(".track-media-card-date").textContent = v.date || "";
     cardEl.querySelector(".track-media-card-time").textContent = v.time || "";
     cardEl.querySelector(".track-media-card-temp").textContent = formatTemperatureForDisplay(v.temperature, temperatureDisplayUnit);
-    cardEl.querySelector(".track-media-card-filename").textContent = v.display_filename || v.filename;
 
     cardEl.addEventListener("mouseenter", () => highlightMapMarker(v.location));
     cardEl.addEventListener("mouseleave", () => unhighlightMapMarker(v.location));
@@ -3123,8 +3290,9 @@ function renderTrackMediaCards(relevant) {
   });
 }
 
-async function openLocationsModal() {
-  locationSelectionOrder = [];
+let locationsCache = [];
+
+async function loadLocationsSection() {
   const [missingRes, allRes] = await Promise.all([
     fetch("/api/locations/missing"),
     fetch("/api/locations"),
@@ -3132,21 +3300,33 @@ async function openLocationsModal() {
   const missingData = await missingRes.json();
   const allLocations = await allRes.json();
 
-  const combined = [];
-  (missingData.missing || []).forEach(name => combined.push({ name, lat: "", lon: "", needsCoords: true }));
-  Object.entries(allLocations).forEach(([name, coords]) =>
-    combined.push({ name, lat: coords.lat, lon: coords.lon, needsCoords: false })
-  );
+  const byName = new Map();
+  Object.entries(allLocations).forEach(([name, coords]) => {
+    byName.set(name, { name, lat: coords.lat, lon: coords.lon, needsCoords: false });
+  });
+  // Legacy names referenced by a video but never added to the curated list —
+  // shown so they can be given coordinates rather than staying invisible.
+  (missingData.missing || []).forEach(name => {
+    if (!byName.has(name)) {
+      byName.set(name, { name, lat: "", lon: "", needsCoords: true });
+    }
+  });
+  const combined = [...byName.values()];
   combined.sort((a, b) => {
-    if (a.needsCoords !== b.needsCoords) return a.needsCoords ? -1 : 1; // locations needing coordinates float to the top
+    if (a.needsCoords !== b.needsCoords) return a.needsCoords ? -1 : 1; // anything still needing coordinates floats to the top
     return a.name.localeCompare(b.name);
   });
 
+  locationsCache = combined;
+  renderLocationsList();
+}
+
+function renderLocationsList() {
   const listEl = document.getElementById("locations-list");
   listEl.innerHTML = "";
   const template = document.getElementById("location-row-template");
 
-  combined.forEach(loc => {
+  locationsCache.forEach(loc => {
     const rowFragment = template.content.cloneNode(true);
     const rowEl = rowFragment.querySelector(".location-row");
     if (loc.needsCoords) rowEl.classList.add("needs-coords");
@@ -3155,24 +3335,25 @@ async function openLocationsModal() {
     rowEl.querySelector(".location-row-name").value = loc.name;
     rowEl.querySelector(".location-row-lat").value = loc.lat;
     rowEl.querySelector(".location-row-lon").value = loc.lon;
-
     rowEl.querySelector(".location-row-save-btn").addEventListener("click", () => saveLocationRow(rowEl));
-    rowEl.querySelector(".location-row-checkbox").addEventListener("change", (e) => {
-      if (e.target.checked) {
-        locationSelectionOrder.push(rowEl);
-      } else {
-        locationSelectionOrder = locationSelectionOrder.filter(r => r !== rowEl);
-      }
-      updateMergeButtonState();
-    });
 
     listEl.appendChild(rowFragment);
   });
-
-  document.getElementById("merge-target-form").classList.add("hidden");
-  updateMergeButtonState();
-  document.getElementById("locations-modal").classList.remove("hidden");
 }
+
+document.getElementById("add-location-btn").addEventListener("click", () => {
+  const listEl = document.getElementById("locations-list");
+  const template = document.getElementById("location-row-template");
+  const rowFragment = template.content.cloneNode(true);
+  const rowEl = rowFragment.querySelector(".location-row");
+  rowEl.dataset.originalName = ""; // brand new — nothing to reassign videos FROM, see saveLocationRow
+  rowEl.classList.add("needs-coords");
+  rowEl.querySelector(".location-row-name").placeholder = "New location name";
+  rowEl.querySelector(".location-row-save-btn").addEventListener("click", () => saveLocationRow(rowEl));
+
+  listEl.appendChild(rowFragment);
+  listEl.lastElementChild.querySelector(".location-row-name").focus();
+});
 
 async function saveLocationRow(rowEl) {
   const originalName = rowEl.dataset.originalName;
@@ -3186,68 +3367,25 @@ async function saveLocationRow(rowEl) {
   const res = await fetch("/api/locations/merge", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_names: [originalName], target_name: name, lat: parseFloat(lat), lon: parseFloat(lon) }),
+    body: JSON.stringify({
+      source_names: originalName ? [originalName] : [], // empty = brand-new location, nothing to reassign videos FROM
+      target_name: name,
+      lat: parseFloat(lat),
+      lon: parseFloat(lon),
+    }),
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
 
-  await openLocationsModal(); // refresh the list — the missing count may have changed
+  await loadLocationsSection();
   await refreshTrackMapAndBadge();
   await loadTrackMediaList();
+  loadUploadLocationOptions(); // the Upload tab's dropdown may now be stale
 }
 
-function updateMergeButtonState() {
-  const checked = document.querySelectorAll(".location-row-checkbox:checked");
-  document.getElementById("merge-selected-locations-btn").disabled = checked.length < 2;
-}
-
-document.getElementById("merge-selected-locations-btn").addEventListener("click", () => {
-  const checkedRows = [...document.querySelectorAll(".location-row-checkbox:checked")].map(cb => cb.closest(".location-row"));
-  if (checkedRows.length < 2) return;
-
-  // Default from whichever row was actually checked FIRST (click order),
-  // not whichever sorts first in the table — locationSelectionOrder tracks
-  // that; fall back to DOM order only if it's somehow out of sync.
-  const firstRow = locationSelectionOrder.find(r => checkedRows.includes(r)) || checkedRows[0];
-  document.getElementById("merge-target-name").value = firstRow.querySelector(".location-row-name").value;
-  document.getElementById("merge-target-lat").value = firstRow.querySelector(".location-row-lat").value;
-  document.getElementById("merge-target-lon").value = firstRow.querySelector(".location-row-lon").value;
-  const form = document.getElementById("merge-target-form");
-  form.classList.remove("hidden");
-  form._sourceNames = checkedRows.map(r => r.dataset.originalName);
+document.getElementById("track-missing-overlay").addEventListener("click", () => {
+  document.querySelector('.tab-btn[data-tab="settings"]').click();
 });
-
-document.getElementById("cancel-merge-btn").addEventListener("click", () => {
-  document.getElementById("merge-target-form").classList.add("hidden");
-});
-
-document.getElementById("confirm-merge-btn").addEventListener("click", async () => {
-  const form = document.getElementById("merge-target-form");
-  const sourceNames = form._sourceNames || [];
-  const targetName = document.getElementById("merge-target-name").value.trim();
-  const lat = document.getElementById("merge-target-lat").value;
-  const lon = document.getElementById("merge-target-lon").value;
-
-  if (sourceNames.length < 2) { alert("Select at least two locations to merge."); return; }
-  if (!targetName) { alert("Merged name is required."); return; }
-  if (lat === "" || lon === "") { alert("Latitude and longitude are required."); return; }
-
-  const res = await fetch("/api/locations/merge", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_names: sourceNames, target_name: targetName, lat: parseFloat(lat), lon: parseFloat(lon) }),
-  });
-  const data = await res.json();
-  if (data.error) { alert(data.error); return; }
-
-  form.classList.add("hidden");
-  await openLocationsModal();
-  await refreshTrackMapAndBadge();
-  await loadTrackMediaList();
-});
-
-document.getElementById("manage-locations-btn").addEventListener("click", () => openLocationsModal());
-document.getElementById("track-missing-overlay").addEventListener("click", () => openLocationsModal());
 
 document.getElementById("track-filter-start").addEventListener("change", applyTrackMediaFilters);
 document.getElementById("track-filter-end").addEventListener("change", applyTrackMediaFilters);
@@ -3260,6 +3398,149 @@ document.querySelectorAll(".track-filter-clear-btn").forEach(btn => {
     applyTrackMediaFilters();
   });
 });
-document.getElementById("locations-modal-close-btn").addEventListener("click", () => {
-  document.getElementById("locations-modal").classList.add("hidden");
+
+document.getElementById("locations-csv-template-btn").addEventListener("click", () => {
+  const csvContent = "name,lat,lon\nUCF30,28.6024,-81.1966\nNorth Trail,28.599,-81.201\n";
+  const blob = new Blob([csvContent], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "locations_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 });
+
+let pendingImportRows = null; // the full valid_rows list from the last preview, held until confirmed or cancelled
+let pendingImportSkipped = [];
+
+document.getElementById("locations-csv-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const resultEl = document.getElementById("locations-import-result");
+  resultEl.classList.remove("error");
+  resultEl.textContent = "Checking file…";
+  resultEl.classList.remove("hidden");
+  document.getElementById("locations-import-confirm").classList.add("hidden");
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const res = await fetch("/api/locations/import-csv/preview", { method: "POST", body: formData });
+    const data = await res.json();
+    e.target.value = ""; // reset so re-selecting the same file still fires a change event next time
+
+    if (data.error) {
+      resultEl.textContent = "Error: " + data.error;
+      resultEl.classList.add("error");
+      return;
+    }
+
+    if (data.conflicts.length === 0) {
+      // Nothing would be overwritten — commit immediately, same low-friction
+      // path as before for the common case (importing brand-new locations).
+      resultEl.classList.add("hidden");
+      await commitLocationsImport(data.valid_rows, data.skipped);
+      return;
+    }
+
+    resultEl.classList.add("hidden");
+    showImportConflicts(data.conflicts, data.new_count, data.skipped, data.valid_rows);
+  } catch (err) {
+    resultEl.textContent = "Import failed — check your connection and try again.";
+    resultEl.classList.add("error");
+  }
+});
+
+function showImportConflicts(conflicts, newCount, skipped, validRows) {
+  pendingImportRows = validRows;
+  pendingImportSkipped = skipped;
+
+  const intro = document.getElementById("locations-import-confirm-intro");
+  intro.textContent = `${conflicts.length} location${conflicts.length === 1 ? "" : "s"} already ${conflicts.length === 1 ? "has" : "have"} coordinates — importing will overwrite ${conflicts.length === 1 ? "it" : "them"} with the values below.` +
+    (newCount > 0 ? ` ${newCount} other new location${newCount === 1 ? "" : "s"} will be added normally.` : "");
+
+  const listEl = document.getElementById("locations-import-confirm-list");
+  listEl.innerHTML = "";
+  conflicts.forEach(c => {
+    const row = document.createElement("div");
+    row.className = "locations-import-confirm-row";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "name";
+    nameSpan.textContent = c.name;
+
+    const oldSpan = document.createElement("span");
+    oldSpan.className = "old-value";
+    oldSpan.textContent = `${c.existing.lat}, ${c.existing.lon}`;
+
+    const newSpan = document.createElement("span");
+    newSpan.className = "new-value";
+    newSpan.textContent = `${c.new.lat}, ${c.new.lon}`;
+
+    row.append(nameSpan, ": ", oldSpan, " → ", newSpan);
+    listEl.appendChild(row);
+  });
+
+  document.getElementById("locations-import-confirm").classList.remove("hidden");
+}
+
+document.getElementById("locations-import-confirm-cancel-btn").addEventListener("click", () => {
+  pendingImportRows = null;
+  pendingImportSkipped = [];
+  document.getElementById("locations-import-confirm").classList.add("hidden");
+  const resultEl = document.getElementById("locations-import-result");
+  resultEl.textContent = "Import cancelled — nothing was changed.";
+  resultEl.classList.remove("error");
+  resultEl.classList.remove("hidden");
+});
+
+document.getElementById("locations-import-confirm-btn").addEventListener("click", async () => {
+  document.getElementById("locations-import-confirm").classList.add("hidden");
+  const rows = pendingImportRows;
+  const skipped = pendingImportSkipped;
+  pendingImportRows = null;
+  pendingImportSkipped = [];
+  await commitLocationsImport(rows, skipped);
+});
+
+async function commitLocationsImport(rows, skippedFromPreview) {
+  const resultEl = document.getElementById("locations-import-result");
+  resultEl.classList.remove("error");
+  resultEl.textContent = "Importing…";
+  resultEl.classList.remove("hidden");
+
+  try {
+    const res = await fetch("/api/locations/import-csv/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows }),
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      resultEl.textContent = "Error: " + data.error;
+      resultEl.classList.add("error");
+      return;
+    }
+
+    let summary = `Imported ${data.imported_count} location${data.imported_count === 1 ? "" : "s"}.`;
+    const allSkipped = [...(skippedFromPreview || []), ...(data.skipped || [])];
+    if (allSkipped.length > 0) {
+      const details = allSkipped
+        .map(s => `row ${s.row}${s.name ? ` (${s.name})` : ""}: ${s.reason}`)
+        .join("; ");
+      summary += ` Skipped ${allSkipped.length}: ${details}`;
+    }
+    resultEl.textContent = summary;
+    resultEl.classList.toggle("error", data.imported_count === 0 && allSkipped.length > 0);
+
+    await loadLocationsSection(); // refresh the list to show newly-imported entries
+    await refreshTrackMapAndBadge();
+    await loadTrackMediaList();
+  } catch (err) {
+    resultEl.textContent = "Import failed — check your connection and try again.";
+    resultEl.classList.add("error");
+  }
+}

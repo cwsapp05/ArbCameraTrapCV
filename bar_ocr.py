@@ -46,7 +46,6 @@ from astral.sun import sun
 CROP_BOXES = {
     "date": (289, 1012, 545, 1064),       # TODO: fill in L, T, R, B
     "time": (546, 1012, 727, 1064),       # TODO: fill in
-    "location": (913, 1012, 1163, 1064),
     "temperature": (750, 1012, 850, 1064),  # TODO: fill in
 }
 
@@ -54,8 +53,9 @@ CROP_BOXES = {
 # won't meaningfully differ between sites (a shift of a few hundred meters to
 # a couple km changes dawn/dusk by well under a minute) — one fixed
 # lat/long for the whole Arboretum is used for every clip, regardless of
-# which camera/location name it came from. Location Name itself is just
-# recorded as the raw text off the bar; it's a label, not a coordinate lookup.
+# which camera/location name it came from. (Per-location coordinates are
+# recorded separately in the app's own locations list; they aren't used for
+# this calculation.)
 ARBORETUM_LAT = 0.0   # TODO: fill in the Arboretum's coordinates
 ARBORETUM_LON = 0.0   # TODO: fill in the Arboretum's coordinates
 
@@ -128,8 +128,8 @@ def ocr_field(frame, box, whitelist=None, psm=8):
 
 # Broad whitelist for OCR-ing the WHOLE info bar as one string (see
 # parse_bar_text) — needs to cover every character that could appear across
-# any field: digits, letters (AM/PM, C/F, and free-text location names),
-# colon, slash, dash, degree symbol, space.
+# any field: digits, letters (AM/PM, C/F, plus any other burned-in label
+# text on the bar), colon, slash, dash, degree symbol, space.
 BAR_WHITELIST = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°/:- "
 
 
@@ -156,11 +156,14 @@ def parse_bar_text(raw_text):
     etc.) shifting where it lands: instead of cropping a fixed pixel region
     where Location is EXPECTED to be, we OCR the entire bar once and pull
     out whatever matches each field's known format, wherever it actually
-    sits in that reading. Whatever text is left over after removing the
-    Date/Time/Temperature matches is treated as Location.
+    sits in that reading.
+
+    Location is deliberately NOT parsed here: it's chosen explicitly by the
+    user when submitting a folder for processing, so reading the camera's
+    burned-in label was redundant and only introduced OCR noise.
 
     Returns {"raw_date": str|None, "raw_time": str|None,
-             "raw_temperature": str|None, "location": str|None} — raw_date
+             "raw_temperature": str|None} — raw_date
     and raw_time are matched substrings, still meant to be passed through
     parse_date()/parse_time() same as before; raw_temperature is used as-is
     (the frontend already parses/formats it for display).
@@ -179,16 +182,11 @@ def parse_bar_text(raw_text):
 
     temp_match = TEMP_DUAL_FINDER_RE.search(working) or TEMP_SINGLE_FINDER_RE.search(working)
     raw_temperature = temp_match.group(0) if temp_match else None
-    if temp_match:
-        working = working[:temp_match.start()] + " " + working[temp_match.end():]
-
-    location = working.strip(" -/:\t\n") or None
 
     return {
         "raw_date": raw_date,
         "raw_time": raw_time,
         "raw_temperature": raw_temperature,
-        "location": location,
     }
 
 
@@ -255,7 +253,6 @@ def process_clip(video_path):
 
     raw_date = ocr_field(frame, CROP_BOXES["date"], whitelist="0123456789/-")
     raw_time = ocr_field(frame, CROP_BOXES["time"], whitelist="0123456789:APM ")
-    location = ocr_field(frame, CROP_BOXES["location"])  # free text, no whitelist
 
     parsed_date = parse_date(raw_date)
     parsed_time = parse_time(raw_time)
@@ -265,7 +262,6 @@ def process_clip(video_path):
         "raw_date_text": raw_date,
         "raw_time_text": raw_time,
         "date": parsed_date.isoformat() if parsed_date else None,
-        "location": location,
         "diel_period": None,
     }
 

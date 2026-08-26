@@ -35,19 +35,15 @@
         <button id="browse-btn">Browse…</button>
       </div>
 
-      <div class="two-col">
-        <div>
-          <label>Country code (optional)</label>
-          <input type="text" id="country" placeholder="e.g. USA" maxlength="3">
-        </div>
-        <div>
-          <label>State code (optional)</label>
-          <input type="text" id="state" placeholder="e.g. FL" maxlength="2">
-        </div>
+      <div id="upload-location-field-wrap">
+        <label>Location</label>
+        <select id="upload-location-select"></select>
       </div>
 
-      <label>Optical Character Recognition (OCR) settings</label>
-      <select id="ocr-config-select"></select>
+      <div id="upload-ocr-field-wrap">
+        <label>Optical Character Recognition (OCR) settings</label>
+        <select id="ocr-config-select"></select>
+      </div>
 
       <button id="run-btn" disabled>Start Processing</button>
       <p id="submit-confirmation" class="muted hidden"></p>
@@ -170,6 +166,7 @@
         <h3 style="margin: 0;">Spreadsheet View</h3>
         <button id="export-csv-btn" class="export-btn">Export to CSV</button>
       </div>
+    </div>
 
     <div class="card">
       <table id="spreadsheet-table" class="spreadsheet">
@@ -197,8 +194,6 @@
   <!-- TRACK TAB -->
   <section id="tab-track" class="tab-panel">
     <div class="track-toolbar">
-      <button id="manage-locations-btn" type="button" class="secondary-btn">📍 Manage Locations</button>
-
       <div class="track-filter-field">
         <label for="track-filter-start">Start</label>
         <input type="datetime-local" id="track-filter-start">
@@ -249,8 +244,22 @@
     </div>
 
     <div class="settings-section">
-      <label>OCR setting presets</label>
-      <div id="ocr-presets-list" class="ocr-presets-list"></div>
+      <label>Optical Character Recognition (OCR)</label>
+
+      <div class="ocr-disable-row">
+        <div class="ocr-disable-text">
+          <span class="ocr-disable-title">Disable OCR</span>
+          <span class="ocr-disable-hint">Manually add data for Date, Time, Location, Temperature, and Diel Period in the Spreadsheet tab</span>
+        </div>
+        <button type="button" id="ocr-disable-toggle" class="toggle-switch" role="switch" aria-checked="false">
+          <span class="toggle-switch-knob"></span>
+        </button>
+      </div>
+
+      <div id="ocr-presets-subsection" class="ocr-presets-subsection">
+        <label class="ocr-presets-subheading">Manage OCR Presets</label>
+        <div id="ocr-presets-list" class="ocr-presets-list"></div>
+      </div>
     </div>
 
     <div class="settings-section">
@@ -258,8 +267,50 @@
       <p class="settings-section-hint">Clears the "marked for review" flag on every video at once — they'll no longer count toward the review badge or appear in the Review tab queue unless re-marked individually.</p>
       <button type="button" id="clear-all-marks-btn" class="secondary-btn">Clear all marked for review</button>
     </div>
+
+    <div class="settings-section">
+      <label>Manage Locations</label>
+      <p class="settings-section-hint">
+        Name, latitude, and longitude are all required to save a location. Renaming a
+        location here updates every matching entry in the Spreadsheet too.
+      </p>
+
+      <div class="locations-import-row">
+        <label for="locations-csv-input" class="secondary-btn locations-csv-label">Import from CSV</label>
+        <input type="file" id="locations-csv-input" accept=".csv" class="hidden">
+        <button type="button" id="locations-csv-template-btn" class="locations-csv-template-btn">Download CSV template</button>
+      </div>
+      <div id="locations-import-result" class="locations-import-result hidden"></div>
+
+      <div id="locations-import-confirm" class="locations-import-confirm hidden">
+        <p id="locations-import-confirm-intro" class="locations-import-confirm-intro"></p>
+        <div id="locations-import-confirm-list" class="locations-import-confirm-list"></div>
+        <div class="locations-import-confirm-actions">
+          <button type="button" id="locations-import-confirm-btn">Import anyway (overwrite)</button>
+          <button type="button" id="locations-import-confirm-cancel-btn" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+
+      <div class="locations-list-header">
+        <span>Name</span>
+        <span>Latitude</span>
+        <span>Longitude</span>
+        <span></span>
+      </div>
+      <div id="locations-list" class="locations-list"></div>
+      <button type="button" id="add-location-btn" class="secondary-btn add-location-btn">+ Add new location</button>
+    </div>
   </section>
 </div>
+
+<template id="location-row-template">
+  <div class="location-row">
+    <input type="text" class="location-row-name" placeholder="Location name">
+    <input type="number" step="any" class="location-row-lat" placeholder="Latitude">
+    <input type="number" step="any" class="location-row-lon" placeholder="Longitude">
+    <button type="button" class="location-row-save-btn secondary-btn">Save</button>
+  </div>
+</template>
 
 <template id="track-media-card-template">
   <div class="track-media-card">
@@ -271,7 +322,6 @@
       <span class="track-media-card-date"></span>
       <span class="track-media-card-time"></span>
       <span class="track-media-card-temp"></span>
-      <span class="track-media-card-filename"></span>
     </div>
     <button type="button" class="track-media-card-zoom-btn" title="Play">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -367,53 +417,26 @@
   <button id="ctx-delete-btn" class="menu-delete-btn">Delete</button>
 </div>
 
-<!-- Location management: fill in coordinates for locations missing them,
-     rename a location, or merge several location names into one. All
-     three are really the same operation at different scales (see
-     /api/locations/merge), so one table + one merge flow covers them. -->
-<div id="locations-modal" class="modal-overlay hidden">
-  <div class="modal-box locations-modal-box">
+<!-- Add New Location: opened from the Upload tab's Location dropdown when
+     "+ Add new location" is selected. On save, the dropdown is refreshed
+     and set to the new location; on cancel, the dropdown reverts. -->
+<div id="add-location-modal" class="modal-overlay hidden">
+  <div class="modal-box">
     <div class="modal-header">
-      <h3>Manage Locations</h3>
-      <button id="locations-modal-close-btn" class="modal-close">✕</button>
+      <h3>Add New Location</h3>
+      <button id="add-location-modal-close-btn" class="modal-close">✕</button>
     </div>
-    <p class="locations-modal-intro">
-      Locations need coordinates to appear on the Track map. Renaming or merging
-      here updates every matching entry in the Spreadsheet too.
-    </p>
-
-    <div class="locations-modal-actions">
-      <button id="merge-selected-locations-btn" type="button" class="secondary-btn" disabled>Merge selected</button>
+    <div class="add-location-modal-form">
+      <label>Name</label>
+      <input type="text" id="add-location-modal-name" placeholder="Location name">
+      <label>Latitude</label>
+      <input type="number" step="any" id="add-location-modal-lat" placeholder="Latitude">
+      <label>Longitude</label>
+      <input type="number" step="any" id="add-location-modal-lon" placeholder="Longitude">
+      <button type="button" id="add-location-modal-save-btn">Save</button>
     </div>
-
-    <div id="merge-target-form" class="merge-target-form hidden">
-      <input type="text" id="merge-target-name" placeholder="Merged name">
-      <input type="number" step="any" id="merge-target-lat" placeholder="Latitude">
-      <input type="number" step="any" id="merge-target-lon" placeholder="Longitude">
-      <button id="confirm-merge-btn" type="button">Confirm merge</button>
-      <button id="cancel-merge-btn" type="button" class="secondary-btn">Cancel</button>
-    </div>
-
-    <div class="locations-list-header">
-      <span></span>
-      <span>Name</span>
-      <span>Latitude</span>
-      <span>Longitude</span>
-      <span></span>
-    </div>
-    <div id="locations-list" class="locations-list"></div>
   </div>
 </div>
-
-<template id="location-row-template">
-  <div class="location-row">
-    <input type="checkbox" class="location-row-checkbox">
-    <input type="text" class="location-row-name" placeholder="Location name">
-    <input type="number" step="any" class="location-row-lat" placeholder="Latitude">
-    <input type="number" step="any" class="location-row-lon" placeholder="Longitude">
-    <button type="button" class="location-row-save-btn secondary-btn">Save</button>
-  </div>
-</template>
 
 <!-- OCR configuration wizard, opened from the Upload tab's OCR Settings dropdown -->
 <div id="ocr-wizard-modal" class="modal-overlay hidden">

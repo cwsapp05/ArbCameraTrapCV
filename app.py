@@ -23,7 +23,9 @@ manually after edits instead.
 """
 
 import collections
+import csv
 import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -93,6 +95,7 @@ species_lock = threading.Lock()
 # Location, per how it was specified).
 ocr_configs = {}
 ocr_last_used = None
+ocr_disabled = False
 ocr_configs_lock = threading.Lock()
 
 _seq_counter = 0  # monotonic; started_at's second-level precision isn't enough
@@ -150,7 +153,7 @@ def save_locations():
 def save_ocr_configs():
     with ocr_configs_lock:
         with open(OCR_CONFIGS_FILE, "w") as f:
-            json.dump({"configs": ocr_configs, "last_used": ocr_last_used}, f, indent=2)
+            json.dump({"configs": ocr_configs, "last_used": ocr_last_used, "disabled": ocr_disabled}, f, indent=2)
 
 
 def load_ocr_configs():
@@ -163,15 +166,17 @@ def load_ocr_configs():
     of misaligned-crop bug already found in practice — better to start from
     nothing and make configuration explicit.)
     """
-    global ocr_configs, ocr_last_used
+    global ocr_configs, ocr_last_used, ocr_disabled
     loaded = load_json(OCR_CONFIGS_FILE, None)
     if loaded is not None:
         ocr_configs = loaded.get("configs", {})
         ocr_last_used = loaded.get("last_used")
+        ocr_disabled = loaded.get("disabled", False)
         return
 
     ocr_configs = {}
     ocr_last_used = SKIP_OCR_VALUE
+    ocr_disabled = False
     save_ocr_configs()
 
 
@@ -266,12 +271,14 @@ def run_bar_ocr_safe(folder, filename, ocr_config_name=None):
     it just gets blank fields, correctable by hand.
 
     ocr_config_name selects which saved bar region to use (see ocr_configs).
-    Rather than cropping separate Date/Time/Temperature/Location boxes, the
-    WHOLE bar is OCR'd as one string and split apart by PATTERN, not
-    position (see bar_ocr.parse_bar_text) — this is what makes Location
-    immune to Temperature's varying width (1 vs. 2-digit Celsius, a
-    negative sign, etc.) shifting where it lands, since nothing is cropped
-    based on an assumed fixed position for it anymore.
+    Rather than cropping separate Date/Time/Temperature boxes, the WHOLE bar
+    is OCR'd as one string and split apart by PATTERN, not position (see
+    bar_ocr.parse_bar_text) — so each field is found wherever it actually
+    sits, immune to Temperature's varying width (1 vs. 2-digit Celsius, a
+    negative sign, etc.) shifting the others along.
+
+    Location is NOT read here — it's selected by the user at upload time
+    and applied to every video in the job (see sync_videos_from_job).
 
     Passing SKIP_OCR_VALUE — or having no configs saved at all — skips
     everything; every field stays blank. Diel Period stays blank too if
@@ -311,7 +318,6 @@ def run_bar_ocr_safe(folder, filename, ocr_config_name=None):
         if parsed_time:
             result["time"] = f"{parsed_time[0]:02d}:{parsed_time[1]:02d}:{parsed_time[2]:02d}"
         result["temperature"] = parsed["raw_temperature"]
-        result["location"] = parsed["location"]
 
         if parsed_date and parsed_time:
             dt = datetime.combine(parsed_date, datetime.min.time()).replace(
@@ -519,6 +525,10 @@ def sync_videos_from_job(job_id):
                 }
             else:
                 ocr_fields = run_bar_ocr_safe(job["folder"], filename, job.get("ocr_config"))
+                # Location is chosen by the user at upload time, not read by
+                # OCR — every video in this job shares the same, deliberately
+                # selected location.
+                ocr_fields["location"] = job.get("location")
 
             videos[vid] = {
                 "id": vid,
@@ -668,19 +678,31 @@ def pick_folder():
 def run_job():
     data = request.get_json(force=True)
     folder = (data.get("folder") or "").strip()
-    country = (data.get("country") or "").strip()
-    state = (data.get("state") or "").strip()
     ocr_config = (data.get("ocr_config") or "").strip()
+    location = (data.get("location") or "").strip()
 
     if not folder:
         return jsonify({"error": "No folder provided"}), 400
     if not Path(folder).is_dir():
         return jsonify({"error": f"Folder not found: {folder}"}), 400
+    if not location:
+        return jsonify({"error": "A location is required"}), 400
+    with locations_lock:
+        known_location = location in locations
+    if not known_location:
+        return jsonify({"error": f"Unknown location: {location}"}), 400
     if ocr_config == CONFIGURE_NEW_VALUE:
         return jsonify({"error": "Finish configuring OCR settings before starting processing"}), 400
 
     global ocr_last_used
-    if ocr_config:
+    with ocr_configs_lock:
+        disabled = ocr_disabled
+    if disabled:
+        # OCR is globally disabled (Settings tab) — enforced here rather
+        # than trusting the frontend to have hidden the dropdown, so a
+        # stale page or a direct API call can't bypass it.
+        ocr_config = SKIP_OCR_VALUE
+    elif ocr_config:
         with ocr_configs_lock:
             ocr_last_used = ocr_config
         save_ocr_configs()
@@ -695,18 +717,13 @@ def run_job():
         sys.executable, "-m", "megadetector.detection.run_md_and_speciesnet",
         folder, str(output_json),
     ]
-    if country:
-        cmd += ["--country", country]
-    if state:
-        cmd += ["--state", state]
 
     with jobs_lock:
         jobs[job_id] = {
             "id": job_id,
             "folder": folder,
-            "country": country,
-            "state": state,
             "ocr_config": ocr_config,
+            "location": location,
             "status": "queued",
             "seq": _next_seq(),
             "started_at": datetime.now().isoformat(timespec="seconds"),
@@ -727,11 +744,29 @@ def run_job():
 
 @app.route("/api/ocr-configs")
 def list_ocr_configs():
-    """Named OCR presets for the Upload tab's dropdown, plus which was used last (the default selection)."""
+    """Named OCR presets for the Upload tab's dropdown, which was used last (the default selection), and whether OCR is globally disabled."""
     with ocr_configs_lock:
         names = sorted(ocr_configs.keys())
         last_used = ocr_last_used
-    return jsonify({"configs": names, "last_used": last_used})
+        disabled = ocr_disabled
+    return jsonify({"configs": names, "last_used": last_used, "disabled": disabled})
+
+
+@app.route("/api/ocr-configs/disabled", methods=["POST"])
+def set_ocr_disabled():
+    """
+    Toggles OCR globally on/off (the Settings tab's "Disable OCR" switch).
+    When disabled, every new job is submitted with OCR skipped regardless
+    of what the Upload tab's dropdown would otherwise select — see
+    run_job, which enforces this server-side rather than trusting the
+    frontend to have hidden the dropdown.
+    """
+    data = request.get_json(force=True)
+    global ocr_disabled
+    with ocr_configs_lock:
+        ocr_disabled = bool(data.get("disabled"))
+    save_ocr_configs()
+    return jsonify({"disabled": ocr_disabled})
 
 
 @app.route("/api/ocr-configs", methods=["POST"])
@@ -905,7 +940,6 @@ def ocr_wizard_preview_readings():
         "date": parsed["raw_date"],
         "time": parsed["raw_time"],
         "temperature": parsed["raw_temperature"],
-        "location": parsed["location"],
     })
 
 
@@ -1019,27 +1053,31 @@ def list_species():
 
 def prune_unused_locations():
     """
-    Removes any location from the locations database that no video
-    currently references — e.g. after the last video pointing to it was
-    deleted, or had its Location field edited to something else. Runs on
-    read (see list_locations/list_missing_locations) rather than being
-    hooked into every place a video's location can change (delete, manual
-    edit, bulk merge, etc.) — self-heals regardless of how the reference
-    disappeared, instead of relying on catching every mutation site.
+    No-op, kept so existing call sites stay valid.
+
+    This used to delete any location no video referenced, back when
+    locations were derived implicitly from OCR text and an unreferenced
+    entry really did mean stale data. That's no longer true: locations are
+    now a deliberately curated list the user maintains in Settings and
+    picks from at upload time, so an unused location is a legitimately
+    pre-registered camera site — often one added minutes before its first
+    footage is even processed.
+
+    Auto-pruning actively broke that flow: a newly added location has no
+    videos by definition, so it was saved and then silently deleted on the
+    very next read, making it look like adding a location did nothing.
     """
-    with videos_lock:
-        used = {v["location"] for v in videos.values() if v.get("location")}
-    with locations_lock:
-        orphaned = [name for name in locations if name not in used]
-        for name in orphaned:
-            del locations[name]
-    if orphaned:
-        save_locations()
+    return
 
 
 @app.route("/api/locations")
 def list_locations():
-    """Every location that has confirmed coordinates — name -> {lat, lon}."""
+    """
+    Every known location name -> {lat, lon}. lat/lon may be null if the
+    name has been registered (via a rename/merge saved without
+    coordinates, or "Add new location") but coordinates haven't been added
+    yet.
+    """
     prune_unused_locations()
     with locations_lock:
         return jsonify(locations)
@@ -1048,11 +1086,12 @@ def list_locations():
 @app.route("/api/locations/missing")
 def list_missing_locations():
     """
-    Location names currently used by at least one video but with no
-    confirmed coordinates yet — what the Track tab checks on open to decide
-    whether to prompt for coordinates.
+    Location names referenced by a video but absent from the curated
+    locations list — normally only legacy entries from before locations
+    were chosen explicitly at upload time, since every location saved now
+    requires coordinates. What the Track tab checks to decide whether to
+    show its missing-coordinates overlay.
     """
-    prune_unused_locations()
     with videos_lock:
         used = {v["location"] for v in videos.values() if v.get("location")}
     with locations_lock:
@@ -1063,32 +1102,35 @@ def list_missing_locations():
 @app.route("/api/locations/merge", methods=["POST"])
 def merge_locations():
     """
-    One endpoint covers all three location-editing actions from the Track
-    tab's setup popup, since they're really the same operation at different
-    scales:
-      - Add coordinates to an existing name: source_names=[name], target_name=name
-      - Rename a location:                   source_names=[old],  target_name=new
-      - Merge several into one:              source_names=[a,b,c], target_name=merged
+    One endpoint covers three location-editing actions from the Settings
+    tab's location manager, since they're really the same operation at
+    different scales:
+      - Create a brand-new location: source_names=[],     target_name=new
+      - Update an existing location: source_names=[name], target_name=name
+      - Rename a location:           source_names=[old],  target_name=new
     Every video whose location matches any of source_names is updated to
     target_name, and the locations database is updated to reflect only the
-    target name with the given coordinates — source names other than the
-    target are removed from it.
+    target name — source names other than the target are removed from it.
+
+    Name, latitude, and longitude are ALL required to save a location.
     """
     data = request.get_json(force=True)
     source_names = data.get("source_names")
     target_name = (data.get("target_name") or "").strip()
-    lat = data.get("lat")
-    lon = data.get("lon")
+    lat_raw = data.get("lat")
+    lon_raw = data.get("lon")
 
-    if not isinstance(source_names, list) or not source_names:
-        return jsonify({"error": "At least one source location is required"}), 400
+    if not isinstance(source_names, list):
+        return jsonify({"error": "source_names must be a list (can be empty for a brand-new location)"}), 400
     if not target_name:
-        return jsonify({"error": "Target name is required"}), 400
+        return jsonify({"error": "A name is required"}), 400
+    if lat_raw is None or lat_raw == "" or lon_raw is None or lon_raw == "":
+        return jsonify({"error": "Latitude and longitude are required"}), 400
     try:
-        lat = float(lat)
-        lon = float(lon)
+        lat = float(lat_raw)
+        lon = float(lon_raw)
     except (TypeError, ValueError):
-        return jsonify({"error": "Valid latitude and longitude are required"}), 400
+        return jsonify({"error": "Latitude and longitude must be numbers"}), 400
     if not (-90 <= lat <= 90):
         return jsonify({"error": "Latitude must be between -90 and 90"}), 400
     if not (-180 <= lon <= 180):
@@ -1113,6 +1155,152 @@ def merge_locations():
     return jsonify({
         "target_name": target_name, "lat": lat, "lon": lon,
         "videos_updated": updated_count,
+    })
+
+
+def _parse_locations_csv(content):
+    """
+    Parses CSV content into (valid_rows, skipped, error). valid_rows is a
+    list of {"name", "lat", "lon"} dicts — nothing is written to the
+    locations database here. Shared by the preview and commit endpoints;
+    commit re-parses/re-validates rather than trusting rows handed back by
+    the client, since that request is raw JSON rather than a freshly
+    re-uploaded file.
+    """
+    reader = csv.DictReader(io.StringIO(content))
+    if not reader.fieldnames:
+        return None, None, "The file appears to be empty"
+
+    field_map = {(f or "").strip().lower(): f for f in reader.fieldnames}
+    name_col = field_map.get("name")
+    lat_col = field_map.get("lat") or field_map.get("latitude")
+    lon_col = field_map.get("lon") or field_map.get("lng") or field_map.get("longitude")
+
+    missing_cols = [
+        label for label, col in [("name", name_col), ("lat/latitude", lat_col), ("lon/lng/longitude", lon_col)]
+        if not col
+    ]
+    if missing_cols:
+        return None, None, f"Missing required column(s): {', '.join(missing_cols)}"
+
+    valid_rows = []
+    skipped = []
+    for row_num, row in enumerate(reader, start=2):  # row 1 is the header
+        name = (row.get(name_col) or "").strip()
+        lat_raw = (row.get(lat_col) or "").strip()
+        lon_raw = (row.get(lon_col) or "").strip()
+
+        if not name:
+            skipped.append({"row": row_num, "reason": "missing name"})
+            continue
+        try:
+            lat = float(lat_raw)
+            lon = float(lon_raw)
+        except ValueError:
+            skipped.append({"row": row_num, "name": name, "reason": "latitude/longitude not numeric"})
+            continue
+        if not (-90 <= lat <= 90):
+            skipped.append({"row": row_num, "name": name, "reason": "latitude out of range (-90 to 90)"})
+            continue
+        if not (-180 <= lon <= 180):
+            skipped.append({"row": row_num, "name": name, "reason": "longitude out of range (-180 to 180)"})
+            continue
+
+        valid_rows.append({"name": name, "lat": lat, "lon": lon})
+
+    return valid_rows, skipped, None
+
+
+@app.route("/api/locations/import-csv/preview", methods=["POST"])
+def preview_locations_csv():
+    """
+    Parses and validates an uploaded CSV WITHOUT writing anything, and
+    flags any row whose name already has coordinates in the locations
+    database as a "conflict" (old value alongside the new one) — the
+    frontend shows these for confirmation before committing, since
+    importing directly would otherwise silently overwrite existing
+    coordinates with no warning.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    try:
+        content = file.read().decode("utf-8-sig")  # utf-8-sig strips a BOM, common in Excel-exported CSVs
+    except UnicodeDecodeError:
+        return jsonify({"error": "Could not read the file as text — make sure it's a plain CSV"}), 400
+
+    valid_rows, skipped, error = _parse_locations_csv(content)
+    if error:
+        return jsonify({"error": error}), 400
+
+    conflicts = []
+    new_count = 0
+    with locations_lock:
+        for row in valid_rows:
+            existing = locations.get(row["name"])
+            if existing:
+                conflicts.append({"name": row["name"], "existing": existing, "new": {"lat": row["lat"], "lon": row["lon"]}})
+            else:
+                new_count += 1
+
+    return jsonify({
+        "valid_rows": valid_rows,  # the full set (new + conflicting) — commit uses this as-is if confirmed
+        "new_count": new_count,
+        "conflicts": conflicts,
+        "skipped": skipped,
+    })
+
+
+@app.route("/api/locations/import-csv/commit", methods=["POST"])
+def commit_locations_csv():
+    """
+    Actually writes a previously-previewed set of rows into the locations
+    database (see preview_locations_csv). Re-validates every row rather
+    than trusting the client, since this accepts raw JSON, not a freshly
+    re-uploaded file.
+    """
+    data = request.get_json(force=True)
+    rows = data.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"error": "No rows to import"}), 400
+
+    imported_names = []
+    skipped = []
+    for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            skipped.append({"row": i, "reason": "malformed row"})
+            continue
+        name = (row.get("name") or "").strip()
+        if not name:
+            skipped.append({"row": i, "reason": "missing name"})
+            continue
+        try:
+            lat = float(row.get("lat"))
+            lon = float(row.get("lon"))
+        except (TypeError, ValueError):
+            skipped.append({"row": i, "name": name, "reason": "latitude/longitude not numeric"})
+            continue
+        if not (-90 <= lat <= 90):
+            skipped.append({"row": i, "name": name, "reason": "latitude out of range (-90 to 90)"})
+            continue
+        if not (-180 <= lon <= 180):
+            skipped.append({"row": i, "name": name, "reason": "longitude out of range (-180 to 180)"})
+            continue
+
+        with locations_lock:
+            locations[name] = {"lat": lat, "lon": lon}
+        imported_names.append(name)
+
+    if imported_names:
+        save_locations()
+
+    return jsonify({
+        "imported_count": len(imported_names),
+        "imported_names": imported_names,
+        "skipped": skipped,
     })
 
 
