@@ -166,9 +166,10 @@
         <h3 style="margin: 0;">Spreadsheet View</h3>
         <button id="export-csv-btn" class="export-btn">Export to CSV</button>
       </div>
-    </div>
 
-    <div class="card">
+      <!-- Inner card: the table gets its own bordered panel nested inside
+           the outer card that holds the heading + Export button. -->
+      <div class="card">
       <table id="spreadsheet-table" class="spreadsheet">
         <thead>
           <tr>
@@ -188,6 +189,7 @@
         <tbody id="spreadsheet-body"></tbody>
       </table>
       <div id="spreadsheet-empty" class="muted hidden">No videos yet.</div>
+      </div>
     </div>
   </section>
 
@@ -209,6 +211,20 @@
         <select id="track-filter-species">
           <option value="">All animals</option>
         </select>
+      </div>
+
+      <div class="track-filter-field">
+        <label>Locations</label>
+        <div class="track-location-filter">
+          <button type="button" id="track-location-filter-btn">All locations</button>
+          <div id="track-location-filter-menu" class="track-location-filter-menu hidden">
+            <div class="track-location-filter-actions">
+              <button type="button" id="track-location-select-all">Select all</button>
+              <button type="button" id="track-location-select-none">Clear all</button>
+            </div>
+            <div id="track-location-filter-list"></div>
+          </div>
+        </div>
       </div>
 
       <button id="track-simulate-btn" type="button" class="secondary-btn track-simulate-btn" title="Coming soon">Simulate</button>
@@ -296,6 +312,7 @@
         <span>Latitude</span>
         <span>Longitude</span>
         <span></span>
+        <span></span>
       </div>
       <div id="locations-list" class="locations-list"></div>
       <button type="button" id="add-location-btn" class="secondary-btn add-location-btn">+ Add new location</button>
@@ -309,6 +326,7 @@
     <input type="number" step="any" class="location-row-lat" placeholder="Latitude">
     <input type="number" step="any" class="location-row-lon" placeholder="Longitude">
     <button type="button" class="location-row-save-btn secondary-btn">Save</button>
+    <button type="button" class="location-row-delete-btn" title="Delete location">Delete</button>
   </div>
 </template>
 

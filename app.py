@@ -1099,6 +1099,38 @@ def list_missing_locations():
     return jsonify({"missing": sorted(used - known)})
 
 
+@app.route("/api/locations/delete", methods=["POST"])
+def delete_location():
+    """
+    Removes a location from the curated list.
+
+    Videos already tagged with it KEEP their location text — deleting a
+    location means "stop offering this for new uploads", not "rewrite
+    history on footage already filed under it". Those videos then show up
+    via /api/locations/missing (a name in use but not in the list), so
+    nothing silently loses its location; it just needs re-adding or
+    correcting if you want it back on the map.
+
+    The response reports how many videos still reference the name so the
+    frontend can warn before deleting one that's actually in use.
+    """
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "A name is required"}), 400
+
+    with locations_lock:
+        if name not in locations:
+            return jsonify({"error": f"Unknown location: {name}"}), 404
+        del locations[name]
+    save_locations()
+
+    with videos_lock:
+        still_referencing = sum(1 for v in videos.values() if v.get("location") == name)
+
+    return jsonify({"deleted": name, "videos_still_referencing": still_referencing})
+
+
 @app.route("/api/locations/merge", methods=["POST"])
 def merge_locations():
     """

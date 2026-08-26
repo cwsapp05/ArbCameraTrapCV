@@ -3127,20 +3127,14 @@ async function refreshTrackMapAndBadge() {
 }
 
 function renderTrackMap(allLocations) {
-  const entries = Object.entries(allLocations);
-  const emptyMsg = document.getElementById("track-map-empty");
-  const mediaList = document.getElementById("track-media-list");
+  // Respect the Track tab's location filter so the map and the side cards
+  // always agree on what's being shown.
+  const entries = Object.entries(allLocations).filter(([name]) => isTrackLocationVisible(name));
 
-  // The map itself always renders now, even with zero locations — only the
-  // right-side panel (media list vs. this empty message) toggles based on
-  // whether there's any location data yet.
-  if (entries.length === 0) {
-    emptyMsg.classList.remove("hidden");
-    mediaList.classList.add("hidden");
-  } else {
-    emptyMsg.classList.add("hidden");
-    mediaList.classList.remove("hidden");
-  }
+  // NOTE: the right-hand panel's empty state is decided in
+  // renderTrackMediaCards, not here — this function only knows about
+  // locations, so it can't tell whether the active date/species filters
+  // actually left any cards to show.
 
   if (!trackMap) {
     trackMap = L.map("track-map");
@@ -3204,8 +3198,103 @@ async function loadTrackMediaList() {
   trackMediaCache.videos = await videosRes.json();
   trackMediaCache.knownLocations = await locationsRes.json();
   populateTrackSpeciesFilter(trackMediaCache.videos);
+  populateTrackLocationFilter(trackMediaCache.knownLocations);
   applyTrackMediaFilters();
 }
+
+// Which locations are shown on the Track tab. null means "all" — kept
+// distinct from "every box happens to be ticked" so newly added locations
+// are included by default rather than silently excluded.
+let trackVisibleLocations = null;
+
+function populateTrackLocationFilter(knownLocations) {
+  const listEl = document.getElementById("track-location-filter-list");
+  const names = Object.keys(knownLocations).sort();
+  listEl.innerHTML = "";
+
+  if (names.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "track-location-filter-empty";
+    empty.textContent = "No locations yet.";
+    listEl.appendChild(empty);
+    updateTrackLocationBtnLabel(names);
+    return;
+  }
+
+  // Drop any remembered selection for locations that no longer exist.
+  if (trackVisibleLocations) {
+    trackVisibleLocations = trackVisibleLocations.filter(n => names.includes(n));
+  }
+
+  names.forEach(name => {
+    const item = document.createElement("label");
+    item.className = "track-location-filter-item";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = trackVisibleLocations === null || trackVisibleLocations.includes(name);
+    cb.addEventListener("change", () => {
+      const checked = [...listEl.querySelectorAll("input:checked")].map(i => i.dataset.name);
+      trackVisibleLocations = checked.length === names.length ? null : checked;
+      updateTrackLocationBtnLabel(names);
+      applyTrackMediaFilters();
+      renderTrackMap(trackMediaCache.knownLocations);
+    });
+    cb.dataset.name = name;
+
+    const text = document.createElement("span");
+    text.textContent = name;
+
+    item.append(cb, text);
+    listEl.appendChild(item);
+  });
+
+  updateTrackLocationBtnLabel(names);
+}
+
+function updateTrackLocationBtnLabel(allNames) {
+  const btn = document.getElementById("track-location-filter-btn");
+  if (trackVisibleLocations === null) {
+    btn.textContent = "All locations";
+  } else if (trackVisibleLocations.length === 0) {
+    btn.textContent = "No locations";
+  } else if (trackVisibleLocations.length === 1) {
+    btn.textContent = trackVisibleLocations[0];
+  } else {
+    btn.textContent = `${trackVisibleLocations.length} of ${allNames.length} locations`;
+  }
+}
+
+function isTrackLocationVisible(name) {
+  return trackVisibleLocations === null || trackVisibleLocations.includes(name);
+}
+
+document.getElementById("track-location-filter-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  document.getElementById("track-location-filter-menu").classList.toggle("hidden");
+});
+
+// Click-away to close, without swallowing clicks inside the menu itself.
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("track-location-filter-menu");
+  if (menu.classList.contains("hidden")) return;
+  if (e.target.closest(".track-location-filter")) return;
+  menu.classList.add("hidden");
+});
+
+document.getElementById("track-location-select-all").addEventListener("click", () => {
+  trackVisibleLocations = null;
+  populateTrackLocationFilter(trackMediaCache.knownLocations);
+  applyTrackMediaFilters();
+  renderTrackMap(trackMediaCache.knownLocations);
+});
+
+document.getElementById("track-location-select-none").addEventListener("click", () => {
+  trackVisibleLocations = [];
+  populateTrackLocationFilter(trackMediaCache.knownLocations);
+  applyTrackMediaFilters();
+  renderTrackMap(trackMediaCache.knownLocations);
+});
 
 function populateTrackSpeciesFilter(allVideos) {
   const select = document.getElementById("track-filter-species");
@@ -3231,6 +3320,7 @@ function applyTrackMediaFilters() {
   // for the planned species/timeframe path-following feature later.
   let relevant = allVideos.filter(v =>
     v.location && knownLocations[v.location] && !hiddenGroups.includes(v.display_species)
+    && isTrackLocationVisible(v.location)
   );
 
   const speciesVal = document.getElementById("track-filter-species").value;
@@ -3261,10 +3351,28 @@ function applyTrackMediaFilters() {
   renderTrackMediaCards(relevant);
 }
 
+function updateTrackEmptyState(cardCount) {
+  const emptyMsg = document.getElementById("track-map-empty");
+  const mediaList = document.getElementById("track-media-list");
+
+  if (cardCount > 0) {
+    emptyMsg.classList.add("hidden");
+    mediaList.classList.remove("hidden");
+    return;
+  }
+
+  // One message for every empty case, whatever the cause.
+  emptyMsg.textContent = "Entries will appear here and their locations will be displayed on the map once you have an entry with location data.";
+  emptyMsg.classList.remove("hidden");
+  mediaList.classList.add("hidden");
+}
+
 function renderTrackMediaCards(relevant) {
   const listEl = document.getElementById("track-media-list");
   listEl.innerHTML = "";
   const template = document.getElementById("track-media-card-template");
+
+  updateTrackEmptyState(relevant.length);
 
   relevant.forEach(v => {
     const cardFragment = template.content.cloneNode(true);
@@ -3336,9 +3444,35 @@ function renderLocationsList() {
     rowEl.querySelector(".location-row-lat").value = loc.lat;
     rowEl.querySelector(".location-row-lon").value = loc.lon;
     rowEl.querySelector(".location-row-save-btn").addEventListener("click", () => saveLocationRow(rowEl));
+    rowEl.querySelector(".location-row-delete-btn").addEventListener("click", () => deleteLocationRow(loc.name));
 
     listEl.appendChild(rowFragment);
   });
+}
+
+async function deleteLocationRow(name) {
+  // Check usage first so the confirmation can say what's actually at stake.
+  const videosRes = await fetch("/api/videos");
+  const allVideos = await videosRes.json();
+  const inUse = allVideos.filter(v => v.location === name).length;
+
+  const warning = inUse > 0
+    ? `Delete "${name}"?\n\n${inUse} ${inUse === 1 ? "entry is" : "entries are"} still tagged with this location. They'll keep their location text, but it will no longer appear on the Track map until you re-add it.`
+    : `Delete "${name}"?`;
+  if (!confirm(warning)) return;
+
+  const res = await fetch("/api/locations/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+
+  await loadLocationsSection();
+  await refreshTrackMapAndBadge();
+  await loadTrackMediaList();
+  loadUploadLocationOptions(); // the Upload tab's dropdown is now stale
 }
 
 document.getElementById("add-location-btn").addEventListener("click", () => {
@@ -3350,6 +3484,9 @@ document.getElementById("add-location-btn").addEventListener("click", () => {
   rowEl.classList.add("needs-coords");
   rowEl.querySelector(".location-row-name").placeholder = "New location name";
   rowEl.querySelector(".location-row-save-btn").addEventListener("click", () => saveLocationRow(rowEl));
+  // Nothing is saved yet for a brand-new row, so this just discards it —
+  // no server call and no confirmation needed.
+  rowEl.querySelector(".location-row-delete-btn").addEventListener("click", () => rowEl.remove());
 
   listEl.appendChild(rowFragment);
   listEl.lastElementChild.querySelector(".location-row-name").focus();

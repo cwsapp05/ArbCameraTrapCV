@@ -1673,7 +1673,7 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .locations-list-header,
 .location-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr auto;
+  grid-template-columns: 2fr 1fr 1fr auto auto;
   gap: 0.6rem;
   align-items: center;
 }
@@ -2039,4 +2039,84 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 #add-location-modal-lon {
   -moz-appearance: textfield;  /* Firefox */
   appearance: textfield;
+}
+
+.location-row-delete-btn {
+  background: white;
+  color: #ef4444;
+  border: 1.5px solid #fca5a5;
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.location-row-delete-btn:hover { background: #fef2f2; }
+
+/* ---- Track tab: locations multi-select filter ---- */
+.track-location-filter { position: relative; }
+
+#track-location-filter-btn {
+  background: white;
+  color: #1f2328;
+  border: 1px solid #e2e5ea;
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.85rem;
+  font-weight: 400;
+  text-align: left;
+  min-width: 150px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#track-location-filter-btn:hover { background: #f6f7f9; }
+
+.track-location-filter-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 600; /* above Leaflet's panes (max 1000 is the map itself; this sits over the toolbar) */
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  padding: 0.5rem;
+  min-width: 220px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.track-location-filter-actions {
+  display: flex;
+  gap: 0.4rem;
+  padding-bottom: 0.45rem;
+  margin-bottom: 0.35rem;
+  border-bottom: 1px solid #edf0f3;
+}
+.track-location-filter-actions button {
+  flex: 1;
+  background: none;
+  color: #2563eb;
+  border: none;
+  padding: 0.2rem;
+  font-size: 0.78rem;
+  text-decoration: underline;
+}
+.track-location-filter-actions button:hover { background: #f6f7f9; }
+
+.track-location-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.25rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.track-location-filter-item:hover { background: #f6f7f9; }
+.track-location-filter-item input { cursor: pointer; margin: 0; }
+.track-location-filter-empty {
+  font-size: 0.8rem;
+  color: #57606a;
+  padding: 0.3rem 0.25rem;
 }
