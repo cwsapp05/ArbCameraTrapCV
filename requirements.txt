@@ -1,0 +1,27 @@
+# Web framework
+flask
+
+# Video/image processing (app.py, bar_ocr.py) — imported as `cv2`
+opencv-python
+
+# OCR of the trail camera's burned-in info bar (bar_ocr.py) — also requires
+# the Tesseract OCR engine itself, a separate system install, not just this
+# Python wrapper:
+#   macOS:   brew install tesseract
+#   Linux:   apt install tesseract-ocr
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+pytesseract
+
+# Dawn/dusk/day/night calculation from a timestamp + coordinates (bar_ocr.py)
+astral
+
+# The actual detection/classification pipeline — app.py shells out to
+# `python -m megadetector.detection.run_md_and_speciesnet` as a subprocess,
+# so these need to be installed in whichever Python environment ends up
+# running that subprocess (normally the same one running app.py itself)
+speciesnet
+megadetector
+
+# Production WSGI server (Flask's built-in server is development-only).
+# MUST be run with workers=1 — see gunicorn.conf.py.
+gunicorn

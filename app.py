@@ -8,18 +8,25 @@ favoritable as a shared team collection, and searchable by species. The
 uploaded video itself is never moved or deleted; it's served in place from
 wherever it was submitted from.
 
-Run with:
+Run with (development):
     python app.py
+Run with (production):
+    gunicorn -c gunicorn.conf.py wsgi:app
 Then open http://localhost:5000 in a browser.
 
 Install:
-    pip install flask speciesnet megadetector
+    pip install -r requirements.txt
 
-IMPORTANT: this app is NOT run with the Flask debug reloader. The reloader
-spawns a second process that would re-import this module and start a SECOND
-queue worker, causing two jobs to run at once — exactly what the queue
-exists to prevent. If you need debug/auto-reload during development, restart
-manually after edits instead.
+IMPORTANT: this app runs as a SINGLE process. It is not run with the Flask
+debug reloader, and under Gunicorn it must run with `workers = 1`. Any
+second process would re-import this module and start a SECOND queue worker,
+running two jobs at once — exactly what the queue exists to prevent — and
+would also get its own separate copy of the in-memory jobs/videos/locations
+state, so edits made on one process would be invisible to the other and
+concurrent JSON saves would overwrite each other. Concurrency comes from
+THREADS (which share this memory, guarded by the locks below), never from
+processes. See gunicorn.conf.py for the full explanation and for what would
+have to change to scale beyond one worker.
 """
 
 import collections
