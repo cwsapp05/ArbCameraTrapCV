@@ -56,8 +56,8 @@ CROP_BOXES = {
 # which camera/location name it came from. (Per-location coordinates are
 # recorded separately in the app's own locations list; they aren't used for
 # this calculation.)
-ARBORETUM_LAT = 0.0   # TODO: fill in the Arboretum's coordinates
-ARBORETUM_LON = 0.0   # TODO: fill in the Arboretum's coordinates
+ARBORETUM_LAT = 28.6019   # TODO: fill in the Arboretum's coordinates
+ARBORETUM_LON = -81.1935   # TODO: fill in the Arboretum's coordinates
 
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
