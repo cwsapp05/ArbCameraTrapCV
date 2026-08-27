@@ -3101,8 +3101,9 @@ function exportSpreadsheetToCSV() {
 document.getElementById("export-csv-btn")?.addEventListener("click", exportSpreadsheetToCSV);
 
 // ==== Track tab ====
-let trackMap = null;
-let trackMapMarkersByName = {}; // location name -> Leaflet marker, for hover-highlighting from the media list
+let trackViewer = null; // Waymark JS viewer instance; its Leaflet map is at trackViewer.map
+let trackFilteredVideos = []; // last filtered result — shared by the side cards AND the map markers so they can't disagree
+let trackMapMarkersByName = {}; // location name -> Leaflet layer, for hover-highlighting from the media list
 
 async function loadTrackTab() {
   await refreshTrackMapAndBadge();
@@ -3123,10 +3124,44 @@ async function refreshTrackMapAndBadge() {
 
   const locRes = await fetch("/api/locations");
   const allLocations = await locRes.json();
-  renderTrackMap(allLocations);
+  // Cache only — rendering happens in applyTrackMediaFilters once the
+  // videos are loaded. Rendering here would tag every marker "No Entries"
+  // (no filtered videos yet) and then immediately re-render, flashing the
+  // wrong state. Every caller of this function also calls
+  // loadTrackMediaList right after, so the render always follows.
+  trackMediaCache.knownLocations = allLocations;
 }
 
-function renderTrackMap(allLocations) {
+function clearTrackMarkers() {
+  // Waymark's own clear_json() is NOT sufficient on its own here. It detaches
+  // layers from `map` and from its GeoJSON store, but markers don't actually
+  // live in either of those: add_to_group() puts each one into
+  // marker_sub_groups[type], which are sub-groups of the marker cluster.
+  // Those are never cleared, so every re-render stacked another full set of
+  // pins into the cluster — the cluster counts climbed by the number of
+  // locations each time and stale pins never disappeared.
+  if (trackViewer.marker_sub_groups) {
+    Object.values(trackViewer.marker_sub_groups).forEach(group => {
+      if (!group || typeof group.removeLayer !== "function") return;
+      // Snapshot before removing: clearLayers() iterates the same _layers
+      // object it mutates, which can skip entries. Collecting first avoids
+      // depending on that behaviour.
+      const layers = [];
+      if (typeof group.eachLayer === "function") group.eachLayer(l => layers.push(l));
+      layers.forEach(l => group.removeLayer(l));
+    });
+  }
+
+  // Catch anything that didn't propagate from the sub-groups. Safe after the
+  // above, since the sub-groups are already empty at this point.
+  if (trackViewer.marker_cluster && typeof trackViewer.marker_cluster.clearLayers === "function") {
+    trackViewer.marker_cluster.clearLayers();
+  }
+
+  trackViewer.clear_json();
+}
+
+function renderTrackMap(allLocations, { fitView = true } = {}) {
   // Respect the Track tab's location filter so the map and the side cards
   // always agree on what's being shown.
   const entries = Object.entries(allLocations).filter(([name]) => isTrackLocationVisible(name));
@@ -3136,41 +3171,134 @@ function renderTrackMap(allLocations) {
   // locations, so it can't tell whether the active date/species filters
   // actually left any cards to show.
 
-  if (!trackMap) {
-    trackMap = L.map("track-map");
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      maxZoom: 19,
-    }).addTo(trackMap);
+  // Waymark builds the map once, then data is swapped in and out with
+  // clear_json/load_json. Re-running init() on every filter change would
+  // rebuild the whole control set and throw away the user's basemap
+  // choice and current view.
+  if (!trackViewer) {
+    if (!window.Waymark_Map_Factory) {
+      console.error("Waymark JS failed to load — the Track map can't be displayed.");
+      return;
+    }
+    trackViewer = window.Waymark_Map_Factory.viewer();
+    trackViewer.init({
+      viewer_options: {
+        show_gallery: "0",   // the side card list already serves this purpose
+        show_filter: "1",    // Waymark's own overlay filter, by marker Type
+        show_cluster: "1",   // declutter cameras sited close together
+        cluster_threshold: "16",
+        show_elevation: "0", // point data only, no lines with elevation
+        sleep_delay_seconds: "0", // scroll-zoom immediately, no click-to-wake
+      },
+      map_options: {
+        map_div_id: "track-map",
+        show_scale: "1",
+        map_max_zoom: 18,
+        tile_layers: [
+          {
+            layer_name: "OpenStreetMap",
+            layer_url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png?r=1",
+            layer_attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            layer_max_zoom: "18",
+          },
+          {
+            layer_name: "Satellite Imagery",
+            layer_url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            layer_attribution: 'Tiles &copy; Esri',
+            layer_max_zoom: "18",
+          },
+          {
+            layer_name: "Topographic",
+            layer_url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+            layer_attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+            layer_max_zoom: "17",
+          },
+        ],
+        marker_types: [
+          {
+            // Title "Has Entries" produces the Type Key "hasentries",
+            // referenced by each feature's `type` property below. These two
+            // Types are assigned per-render from the CURRENTLY FILTERED
+            // entries, so a location moves between them as filters change.
+            marker_title: "Has Entries",
+            marker_shape: "marker",
+            marker_size: "medium",
+            icon_type: "icon",
+            marker_icon: "ion-camera",
+            marker_colour: "#2563eb",
+            icon_colour: "#ffffff",
+          },
+          {
+            marker_title: "No Entries",
+            marker_shape: "marker",
+            marker_size: "medium",
+            icon_type: "icon",
+            marker_icon: "ion-camera",
+            marker_colour: "#9aa4b1",
+            icon_colour: "#ffffff",
+          },
+        ],
+      },
+    });
   }
 
-  Object.values(trackMapMarkersByName).forEach(m => trackMap.removeLayer(m));
+  // Count from the SAME filtered set that produced the side cards, not from
+  // every video — so each marker's Type and popup count always agree with
+  // what's actually listed. Reflects date range, species, selected
+  // locations, and species hidden in Settings.
+  const counts = {};
+  (trackFilteredVideos || []).forEach(v => {
+    if (v.location) counts[v.location] = (counts[v.location] || 0) + 1;
+  });
+
+  clearTrackMarkers();
   trackMapMarkersByName = {};
 
   if (entries.length === 0) {
-    // Nothing to fit bounds to yet — a reasonable generic world view rather
+    // Nothing to fit bounds to — a reasonable generic world view rather
     // than an undefined viewport.
-    trackMap.setView([20, 0], 2);
+    if (fitView) trackViewer.map.setView([20, 0], 2);
   } else {
-    const bounds = [];
-    entries.forEach(([name, coords]) => {
-      const marker = L.marker([coords.lat, coords.lon]).addTo(trackMap);
-      marker.bindPopup(name);
-      trackMapMarkersByName[name] = marker;
-      bounds.push([coords.lat, coords.lon]);
+    // Second arg false: load_json otherwise calls reset_map_view() itself,
+    // which runs its own fitBounds — we do our own below (single-location
+    // needs setView at a sane zoom, not a max-zoom fit on one point).
+    trackViewer.load_json({
+      type: "FeatureCollection",
+      features: entries.map(([name, coords]) => ({
+        type: "Feature",
+        // GeoJSON is lon,lat — the reverse of Leaflet's lat,lon ordering.
+        geometry: { type: "Point", coordinates: [coords.lon, coords.lat] },
+        properties: {
+          type: counts[name] ? "hasentries" : "noentries",
+          title: name,
+          description: counts[name]
+            ? `${counts[name]} ${counts[name] === 1 ? "entry" : "entries"} shown here.`
+            : "No entries shown here with the current filters.",
+        },
+      })),
+    }, false);
+
+    // Index the created layers by location name so hovering a side card can
+    // still open its marker's popup (see highlightMapMarker).
+    trackViewer.map_data.eachLayer(layer => {
+      const title = layer.feature && layer.feature.properties && layer.feature.properties.title;
+      if (title) trackMapMarkersByName[title] = layer;
     });
 
-    if (bounds.length === 1) {
-      trackMap.setView(bounds[0], 15);
-    } else {
-      trackMap.fitBounds(bounds, { padding: [30, 30] });
+    if (fitView) {
+      const bounds = entries.map(([, c]) => [c.lat, c.lon]);
+      if (bounds.length === 1) {
+        trackViewer.map.setView(bounds[0], 15);
+      } else {
+        trackViewer.map.fitBounds(bounds, { padding: [30, 30] });
+      }
     }
   }
 
   // Leaflet sizes itself off the container's CURRENT visible dimensions —
   // if the tab was hidden when the map was first created, this fixes any
   // stale sizing now that the container is actually visible.
-  setTimeout(() => trackMap.invalidateSize(), 0);
+  setTimeout(() => trackViewer.map.invalidateSize(), 0);
 }
 
 function dielPeriodClass(period) {
@@ -3180,7 +3308,16 @@ function dielPeriodClass(period) {
 
 function highlightMapMarker(locationName) {
   const marker = trackMapMarkersByName[locationName];
-  if (marker) marker.openPopup();
+  if (!marker) return;
+  // With clustering on, a marker may currently be collapsed inside a
+  // cluster and not actually on the map — openPopup() would silently do
+  // nothing. zoomToShowLayer expands the cluster first, then opens it.
+  const cluster = trackViewer && trackViewer.marker_cluster;
+  if (cluster && typeof cluster.zoomToShowLayer === "function" && !trackViewer.map.hasLayer(marker)) {
+    cluster.zoomToShowLayer(marker, () => marker.openPopup());
+    return;
+  }
+  marker.openPopup();
 }
 
 function unhighlightMapMarker(locationName) {
@@ -3199,7 +3336,7 @@ async function loadTrackMediaList() {
   trackMediaCache.knownLocations = await locationsRes.json();
   populateTrackSpeciesFilter(trackMediaCache.videos);
   populateTrackLocationFilter(trackMediaCache.knownLocations);
-  applyTrackMediaFilters();
+  applyTrackMediaFilters({ fitView: true });
 }
 
 // Which locations are shown on the Track tab. null means "all" — kept
@@ -3237,8 +3374,7 @@ function populateTrackLocationFilter(knownLocations) {
       const checked = [...listEl.querySelectorAll("input:checked")].map(i => i.dataset.name);
       trackVisibleLocations = checked.length === names.length ? null : checked;
       updateTrackLocationBtnLabel(names);
-      applyTrackMediaFilters();
-      renderTrackMap(trackMediaCache.knownLocations);
+      applyTrackMediaFilters({ fitView: true }); // location set changed — re-fit is appropriate here
     });
     cb.dataset.name = name;
 
@@ -3285,15 +3421,13 @@ document.addEventListener("click", (e) => {
 document.getElementById("track-location-select-all").addEventListener("click", () => {
   trackVisibleLocations = null;
   populateTrackLocationFilter(trackMediaCache.knownLocations);
-  applyTrackMediaFilters();
-  renderTrackMap(trackMediaCache.knownLocations);
+  applyTrackMediaFilters({ fitView: true });
 });
 
 document.getElementById("track-location-select-none").addEventListener("click", () => {
   trackVisibleLocations = [];
   populateTrackLocationFilter(trackMediaCache.knownLocations);
-  applyTrackMediaFilters();
-  renderTrackMap(trackMediaCache.knownLocations);
+  applyTrackMediaFilters({ fitView: true });
 });
 
 function populateTrackSpeciesFilter(allVideos) {
@@ -3312,7 +3446,7 @@ function populateTrackSpeciesFilter(allVideos) {
   if (speciesSet.has(currentValue)) select.value = currentValue; // keep the selection if it's still a valid option
 }
 
-function applyTrackMediaFilters() {
+function applyTrackMediaFilters({ fitView = false } = {}) {
   const { videos: allVideos, knownLocations } = trackMediaCache;
 
   // Only entries whose location actually has a map point — nothing to
@@ -3348,7 +3482,16 @@ function applyTrackMediaFilters() {
     return aKey.localeCompare(bKey);
   });
 
+  trackFilteredVideos = relevant;
   renderTrackMediaCards(relevant);
+
+  // Refresh the markers from the same result so their Type (Has Entries /
+  // No Entries) and popup counts stay in step with the cards. fitView is
+  // off by default: re-fitting on every date/species tweak would yank the
+  // map away from wherever the user had panned to.
+  if (trackMediaCache.knownLocations) {
+    renderTrackMap(trackMediaCache.knownLocations, { fitView });
+  }
 }
 
 function updateTrackEmptyState(cardCount) {
