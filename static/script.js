@@ -1,3 +1,13 @@
+// ==================== Account state (PLACEHOLDER auth) ====================
+// Declared up here, not beside the account-menu code at the bottom, because
+// isSignedIn() is called during page init (updateLibraryTabBadge, renderGrid).
+// Function declarations hoist; `const` does not — leaving these at the
+// bottom would put them in the temporal dead zone at that point.
+// See the account-menu block at the end of this file for the full context.
+const ACCOUNT_STORAGE_KEY = "arbcam_signed_in";
+const PLACEHOLDER_IDENTITY = { name: "Connor Sapp", status: "Arbling" }; // stand-in for what SSO will return
+const GUEST_IDENTITY = { name: "Guest", status: "Non-User" };
+
 let queuePollTimer = null;
 let lastQueueSize = 0; // used by pollQueue to detect "a job just finished" (size decreased)
 let allSpecies = [];        // full taxonomy from /api/species, INCLUDES zero-count entries
@@ -1278,6 +1288,15 @@ async function refreshSpeciesData() {
 function updateLibraryTabBadge() {
   const tabBtn = document.querySelector('.tab-btn[data-tab="library"]');
   let badge = tabBtn.querySelector(".tab-badge");
+
+  // Guarded here rather than only in applyAuthVisibility because this runs
+  // on every data refresh and would otherwise recreate the badge for a
+  // signed-out viewer.
+  if (!isSignedIn()) {
+    if (badge) badge.remove();
+    return;
+  }
+
   if (totalUnreviewedCount > 0) {
     if (!badge) {
       badge = document.createElement("span");
@@ -1835,7 +1854,11 @@ function renderGrid(videos, gridId, emptyId) {
       card.querySelector(".verified-info").classList.remove("hidden");
     }
     if (v.marked_for_review) {
-      card.querySelector(".unreviewed-corner-bubble").classList.remove("hidden");
+      // Review state is an internal workflow signal — meaningless to a
+      // signed-out viewer, so it stays hidden for them.
+      if (isSignedIn()) {
+        card.querySelector(".unreviewed-corner-bubble").classList.remove("hidden");
+      }
     }
 
     const whichTab = gridId === "lib-grid" ? "lib" : "fav";
@@ -1844,6 +1867,13 @@ function renderGrid(videos, gridId, emptyId) {
 
     function triggerExpand(e) {
       e.stopPropagation();
+      // Signed out is a read-only view: the in-grid panel exists to edit
+      // Count/Notes/favourites, none of which apply, so just play the
+      // media in the modal instead.
+      if (!isSignedIn()) {
+        showVideoModal(v.id, v.media_type);
+        return;
+      }
       // Already expanded — once expanded, a click on the video is handled
       // exclusively by the play/pause toggle that expandCardInfoPanel
       // attaches; without this guard, that same click would ALSO re-enter
@@ -1855,6 +1885,16 @@ function renderGrid(videos, gridId, emptyId) {
     photoEl.addEventListener("click", triggerExpand);
     thumbWrap.addEventListener("click", triggerExpand);
     videoEl.addEventListener("click", triggerExpand);
+
+    // Species correction is an editing control — hidden entirely in the
+    // read-only signed-out view. Skipping the wiring below (rather than
+    // just hiding it with CSS) also avoids pointlessly building the full
+    // species option list for every card.
+    if (!isSignedIn()) {
+      card.querySelector(".correction-row").classList.add("hidden");
+      grid.appendChild(card);
+      return;
+    }
 
     const correctionSelect = card.querySelector(".correction-select");
     buildCorrectionOptions(correctionSelect, v);
@@ -3837,12 +3877,6 @@ async function commitLocationsImport(rows, skippedFromPreview) {
 // sign-out hits the logout endpoint, and the identity below comes from a
 // server-side session (an endpoint like /api/auth/me) instead of
 // localStorage. Only this block should need to change.
-const ACCOUNT_STORAGE_KEY = "arbcam_signed_in";
-
-// Hardcoded stand-in for what SSO will eventually return.
-const PLACEHOLDER_IDENTITY = { name: "Connor Sapp", status: "Arbling" };
-const GUEST_IDENTITY = { name: "Guest", status: "Non-User" };
-
 function isSignedIn() {
   try {
     return localStorage.getItem(ACCOUNT_STORAGE_KEY) === "1";
@@ -3850,6 +3884,30 @@ function isSignedIn() {
     // Private browsing / storage disabled — degrade to signed-out rather
     // than throwing on page load.
     return false;
+  }
+}
+
+// Tabs a signed-out visitor can see. Everything else is either an editing
+// workflow or an admin surface, so the public view is limited to browsing.
+const SIGNED_OUT_TABS = ["library", "favorites"];
+
+function applyAuthVisibility() {
+  const signedIn = isSignedIn();
+
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    const allowed = signedIn || SIGNED_OUT_TABS.includes(btn.dataset.tab);
+    btn.classList.toggle("hidden", !allowed);
+  });
+
+  // (The Library review-count badge is handled in updateLibraryTabBadge,
+  // which re-runs on every data refresh.)
+
+  // If the active tab just became hidden (e.g. signed out while on
+  // Settings), fall back to Library rather than leaving the user staring at
+  // a panel with no way back to it.
+  const active = document.querySelector(".tab-btn.active");
+  if (!signedIn && active && !SIGNED_OUT_TABS.includes(active.dataset.tab)) {
+    document.querySelector('.tab-btn[data-tab="library"]').click();
   }
 }
 
@@ -3897,3 +3955,4 @@ document.getElementById("account-auth-btn").addEventListener("click", () => {
 });
 
 renderAccountMenu();
+applyAuthVisibility();
