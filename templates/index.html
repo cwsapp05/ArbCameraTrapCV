@@ -18,6 +18,24 @@
 <div class="app">
   <div class="header-row">
     <h1><span id="title-emoji">🦝</span> UCF Arboretum Trail Cam Species Library</h1>
+
+    <!-- Account menu. The sign-in flow here is a PLACEHOLDER standing in for
+         UCF SSO — see the note above signIn() in script.js. -->
+    <div class="account-area">
+      <button type="button" id="account-btn" class="account-btn" title="Account" aria-haspopup="true" aria-expanded="false">
+        <!-- Default profile picture: generic head-and-shoulders silhouette -->
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <circle cx="12" cy="8.5" r="4" fill="currentColor"></circle>
+          <path d="M3.5 21c0-4.7 3.8-8.5 8.5-8.5s8.5 3.8 8.5 8.5z" fill="currentColor"></path>
+        </svg>
+      </button>
+
+      <div id="account-menu" class="account-menu hidden">
+        <div class="account-menu-name" id="account-menu-name">Guest</div>
+        <div class="account-menu-status" id="account-menu-status">Non-User</div>
+        <button type="button" id="account-auth-btn" class="account-auth-btn">Sign in</button>
+      </div>
+    </div>
   </div>
 
   <div class="tabs">

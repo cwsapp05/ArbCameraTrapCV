@@ -2120,3 +2120,66 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   color: #57606a;
   padding: 0.3rem 0.25rem;
 }
+
+/* ---- Account / sign-in menu (top-right) ---- */
+.account-area {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: 1rem;
+}
+
+.account-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  border-radius: 50%;
+  background: #e2e5ea;
+  color: #57606a;
+  border: 1px solid #d6dae0;
+}
+.account-btn:hover { background: #d6dae0; color: #1f2328; }
+/* Signed in: filled treatment so the state is readable without opening the menu. */
+.account-btn.signed-in {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+.account-btn.signed-in:hover { background: #1d4ed8; }
+
+.account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  /* Above all normal page content, but deliberately BELOW .modal-overlay
+     (1100) — a menu floating over an open modal would look broken. */
+  z-index: 1050;
+  min-width: 200px;
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 0.9rem;
+  text-align: left;
+}
+
+.account-menu-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1f2328;
+  line-height: 1.2;
+}
+.account-menu-status {
+  font-size: 0.78rem;
+  color: #57606a;
+  margin-top: 0.15rem;
+}
+
+.account-auth-btn {
+  width: 100%;
+  margin-top: 0.9rem;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.85rem;
+}

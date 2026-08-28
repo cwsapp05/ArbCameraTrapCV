@@ -3824,3 +3824,76 @@ async function commitLocationsImport(rows, skippedFromPreview) {
     resultEl.classList.add("error");
   }
 }
+
+
+// ==================== Account menu (PLACEHOLDER auth) ====================
+//
+// This is a stand-in for UCF SSO, NOT a real authentication system. The
+// signed-in state is just a flag in localStorage: it's client-side only,
+// trivially set by hand, and grants nothing. Nothing in the app checks it,
+// and no endpoint is protected by it.
+//
+// When real SSO arrives, the swap is: signIn() redirects to the UCF IdP,
+// sign-out hits the logout endpoint, and the identity below comes from a
+// server-side session (an endpoint like /api/auth/me) instead of
+// localStorage. Only this block should need to change.
+const ACCOUNT_STORAGE_KEY = "arbcam_signed_in";
+
+// Hardcoded stand-in for what SSO will eventually return.
+const PLACEHOLDER_IDENTITY = { name: "Connor Sapp", status: "Arbling" };
+const GUEST_IDENTITY = { name: "Guest", status: "Non-User" };
+
+function isSignedIn() {
+  try {
+    return localStorage.getItem(ACCOUNT_STORAGE_KEY) === "1";
+  } catch (e) {
+    // Private browsing / storage disabled — degrade to signed-out rather
+    // than throwing on page load.
+    return false;
+  }
+}
+
+function renderAccountMenu() {
+  const signedIn = isSignedIn();
+  const identity = signedIn ? PLACEHOLDER_IDENTITY : GUEST_IDENTITY;
+
+  document.getElementById("account-menu-name").textContent = identity.name;
+  document.getElementById("account-menu-status").textContent = identity.status;
+  document.getElementById("account-auth-btn").textContent = signedIn ? "Sign out" : "Sign in";
+  document.getElementById("account-btn").classList.toggle("signed-in", signedIn);
+}
+
+document.getElementById("account-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById("account-menu");
+  const nowOpen = menu.classList.contains("hidden");
+  menu.classList.toggle("hidden");
+  e.currentTarget.setAttribute("aria-expanded", nowOpen ? "true" : "false");
+});
+
+// Click anywhere else closes it, without swallowing clicks inside the menu.
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("account-menu");
+  if (menu.classList.contains("hidden")) return;
+  if (e.target.closest(".account-area")) return;
+  menu.classList.add("hidden");
+  document.getElementById("account-btn").setAttribute("aria-expanded", "false");
+});
+
+document.getElementById("account-auth-btn").addEventListener("click", () => {
+  try {
+    if (isSignedIn()) {
+      localStorage.removeItem(ACCOUNT_STORAGE_KEY);
+    } else {
+      localStorage.setItem(ACCOUNT_STORAGE_KEY, "1");
+    }
+  } catch (e) {
+    alert("Sign-in state can't be saved because browser storage is unavailable.");
+    return;
+  }
+  // Reload so the app comes up cleanly in the new state — this also mirrors
+  // how real SSO behaves, since it round-trips through the identity provider.
+  window.location.reload();
+});
+
+renderAccountMenu();
