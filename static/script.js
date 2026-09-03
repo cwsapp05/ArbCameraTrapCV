@@ -1147,7 +1147,6 @@ function renderReviewCard() {
   document.getElementById("review-field-date").value = v.date || "";
   document.getElementById("review-field-time").value = v.time || "";
   document.getElementById("review-field-location").value = v.location || "";
-  document.getElementById("review-field-diel_period").value = v.diel_period || "";
   document.getElementById("review-field-temperature").value = formatTemperatureForDisplay(v.temperature, temperatureDisplayUnit);
   document.getElementById("review-field-count").value = v.count ?? 1;
   document.getElementById("review-field-filename").value = stripExtension(v.display_filename || v.filename);
@@ -1189,7 +1188,6 @@ async function saveCurrentReviewFields() {
     date: document.getElementById("review-field-date").value.trim(),
     time: document.getElementById("review-field-time").value.trim(),
     location: document.getElementById("review-field-location").value.trim(),
-    diel_period: document.getElementById("review-field-diel_period").value.trim(),
     count: document.getElementById("review-field-count").value,
     notes: document.getElementById("review-field-notes").value,
     display_filename: document.getElementById("review-field-filename").value.trim(),
@@ -2607,6 +2605,16 @@ function renderSpreadsheet(videos) {
         } else {
           td.dataset.tooltip = "No coordinates yet";
         }
+
+        // Same inner-span pattern as the filename cell: the td needs
+        // overflow:visible so the tooltip can escape its box, which
+        // disables the td's own truncation — so the text truncates on this
+        // span instead of spilling into the neighbouring columns.
+        const locSpan = document.createElement("span");
+        locSpan.className = "location-cell-text";
+        locSpan.textContent = td.textContent;
+        td.textContent = "";
+        td.appendChild(locSpan);
       }
 
       if (field === "species") {
@@ -2808,6 +2816,12 @@ function copyEntireTableToClipboard() {
 function startCellEdit(td, videoId) {
   if (td.querySelector("input")) return; // already editing
   const field = td.dataset.field;
+
+  // Diel Period is derived from date + time + the location's coordinates
+  // (see compute_diel_period in app.py) and updates automatically when any
+  // of those change. A typed-in value would just be overwritten on the next
+  // edit to one of its inputs, so the cell isn't editable.
+  if (field === "diel_period") return;
   const originalValue = td.textContent;
   const tr = td.closest("tr");
 
@@ -2937,9 +2951,25 @@ async function saveCellEdit(videoId, field, newValue, originalValue) {
     return originalValue;
   }
   patchSpreadsheetVideo(videoId, data);
+
+  // Editing date, time, or location makes the server recompute the derived
+  // diel period. patchSpreadsheetVideo puts the new value in the cached
+  // record, but that cell is already on screen showing the old one — so
+  // refresh it directly rather than waiting for a full re-render.
+  if (["date", "time", "location"].includes(field)) {
+    refreshDielCellFor(videoId, data.diel_period);
+  }
+
   if (field === "count") return String(data.count);
   if (field === "temperature") return formatTemperatureForDisplay(data.temperature, temperatureDisplayUnit);
   return data[field] || "";
+}
+
+function refreshDielCellFor(videoId, dielPeriod) {
+  const row = document.querySelector(`.spreadsheet tr[data-video-id="${videoId}"]`);
+  if (!row) return;
+  const cell = row.querySelector('td[data-field="diel_period"]');
+  if (cell) cell.textContent = dielPeriod || "";
 }
 
 // Every save endpoint (/correct, /update) returns the full updated record —
@@ -3956,3 +3986,22 @@ document.getElementById("account-auth-btn").addEventListener("click", () => {
 
 renderAccountMenu();
 applyAuthVisibility();
+
+
+// ---- Review tab: Count stepper buttons ----
+// The +/- buttons are the primary control here, since the native spinner
+// arrows are hidden. They only need to set the input's value: review fields
+// are read straight off the inputs by saveCurrentReviewFields() when you
+// navigate or leave the tab, so no save call belongs here. The `change`
+// event is dispatched purely so any listener added later behaves the same
+// as it would for a typed edit. Clamped at zero to match the input's min.
+function stepReviewCount(delta) {
+  const input = document.getElementById("review-field-count");
+  const current = parseInt(input.value, 10);
+  const next = Math.max(0, (isNaN(current) ? 0 : current) + delta);
+  input.value = next;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+document.getElementById("review-count-down").addEventListener("click", () => stepReviewCount(-1));
+document.getElementById("review-count-up").addEventListener("click", () => stepReviewCount(1));

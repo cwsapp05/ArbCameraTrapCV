@@ -1133,7 +1133,17 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   position: relative; /* anchors the tooltip pseudo-element below */
   overflow: visible;   /* .spreadsheet td sets overflow:hidden for text
                           truncation, which would otherwise clip this cell's
-                          tooltip since it renders above the cell's own box */
+                          tooltip since it renders above the cell's own box.
+                          The .location-cell-text span below does the actual
+                          truncating so long names don't spill into the
+                          neighbouring columns. */
+}
+
+.location-cell-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .spreadsheet td[data-field="location"][data-tooltip]::after {
   content: attr(data-tooltip);
@@ -2018,6 +2028,14 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   font-weight: 600;
 }
 
+.app-credit p { margin: 0.2rem 0; }
+
+.app-credit a {
+  color: #888;
+  text-decoration: underline;
+}
+.app-credit a:hover { color: #bbb; }
+
 /* Hide the number-input spinner arrows on latitude/longitude fields.
    Coordinates aren't a value you nudge up and down — the arrows are
    useless here and just crowd the field. Scoped to these specific
@@ -2182,4 +2200,50 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   margin-top: 0.9rem;
   padding: 0.45rem 0.8rem;
   font-size: 0.85rem;
+}
+
+/* ---- Review tab: Count row with prominent steppers ---- */
+.review-count-row label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #444b53;
+  margin: 0 0 0.3rem;
+}
+
+.review-count-stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.review-count-btn {
+  flex: 0 0 3rem;
+  font-size: 1.4rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0;
+  border-radius: 8px;
+}
+
+/* The count field sits between the two buttons and carries the same
+   height. Its native spinner arrows are hidden — the large buttons either
+   side are the intended control, and tiny duplicate arrows next to them
+   just add visual noise. */
+.review-count-stepper input {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-top: 0;
+}
+.review-count-stepper input::-webkit-outer-spin-button,
+.review-count-stepper input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.review-count-stepper input {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }

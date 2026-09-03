@@ -34,6 +34,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -271,6 +272,51 @@ def _resolve_ocr_config(ocr_config_name):
         )
 
 
+def compute_diel_period(date_str, time_str, location_name, locations_snapshot=None):
+    """
+    Derives Day/Night/Dawn/Dusk from an entry's OWN date, time, and the
+    coordinates of its location.
+
+    This is deliberately NOT part of the OCR/processing pipeline. All three
+    inputs are editable after processing (date and time in the Spreadsheet,
+    the location's coordinates in Settings), so diel period is treated as a
+    derived value recomputed whenever any of them changes, rather than
+    something frozen at import time. It previously used one hardcoded
+    site-wide coordinate pair, which couldn't reflect per-location
+    differences at all.
+
+    Returns None if any input is missing or unparseable — a blank cell is
+    honest, where a stale or guessed value wouldn't be.
+
+    locations_snapshot lets a caller that already holds videos_lock pass in
+    a copy of the locations dict taken beforehand. Nothing in this module
+    nests locks, and acquiring locations_lock while holding videos_lock
+    would create the first videos->locations ordering — a deadlock waiting
+    for any future code that happens to take them the other way round.
+    """
+    if not date_str or not time_str or not location_name:
+        return None
+
+    if locations_snapshot is not None:
+        coords = locations_snapshot.get(location_name)
+    else:
+        with locations_lock:
+            coords = locations.get(location_name)
+    if not coords or coords.get("lat") is None or coords.get("lon") is None:
+        return None
+
+    try:
+        dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+    try:
+        return bar_ocr.diel_period(dt, coords["lat"], coords["lon"])
+    except Exception as e:
+        print(f"Diel period calculation failed for {location_name} at {date_str} {time_str}: {e}")
+        return None
+
+
 def run_bar_ocr_safe(folder, filename, ocr_config_name=None):
     """
     Wraps bar_ocr's pipeline for one video file. Never raises — a single
@@ -325,12 +371,9 @@ def run_bar_ocr_safe(folder, filename, ocr_config_name=None):
         if parsed_time:
             result["time"] = f"{parsed_time[0]:02d}:{parsed_time[1]:02d}:{parsed_time[2]:02d}"
         result["temperature"] = parsed["raw_temperature"]
-
-        if parsed_date and parsed_time:
-            dt = datetime.combine(parsed_date, datetime.min.time()).replace(
-                hour=parsed_time[0], minute=parsed_time[1], second=parsed_time[2]
-            )
-            result["diel_period"] = bar_ocr.diel_period(dt, bar_ocr.ARBORETUM_LAT, bar_ocr.ARBORETUM_LON)
+        # diel_period is intentionally NOT set here — it's derived from
+        # date + time + the location's coordinates by compute_diel_period(),
+        # called after the location is applied (see sync_videos_from_job).
         return result
     except Exception as e:
         print(f"OCR failed for {folder}/{filename}: {e}")
@@ -536,6 +579,11 @@ def sync_videos_from_job(job_id):
                 # OCR — every video in this job shares the same, deliberately
                 # selected location.
                 ocr_fields["location"] = job.get("location")
+                # Derived last, once date/time (OCR) and location (chosen at
+                # upload) are all known.
+                ocr_fields["diel_period"] = compute_diel_period(
+                    ocr_fields.get("date"), ocr_fields.get("time"), ocr_fields.get("location")
+                )
 
             videos[vid] = {
                 "id": vid,
@@ -1191,6 +1239,20 @@ def merge_locations():
         locations[target_name] = {"lat": lat, "lon": lon}
     save_locations()
 
+    # Diel period is derived from the location's coordinates, so moving or
+    # renaming a location makes it stale for every entry filed there.
+    # Recompute those now rather than leaving them wrong until someone
+    # happens to re-edit each row.
+    snapshot = {target_name: {"lat": lat, "lon": lon}}
+    with videos_lock:
+        for v in videos.values():
+            if v.get("location") == target_name:
+                v["diel_period"] = compute_diel_period(
+                    v.get("date"), v.get("time"), target_name,
+                    locations_snapshot=snapshot,
+                )
+    save_videos_index()
+
     return jsonify({
         "target_name": target_name, "lat": lat, "lon": lon,
         "videos_updated": updated_count,
@@ -1411,16 +1473,21 @@ def correct_species(video_id):
 @app.route("/api/videos/<video_id>/update", methods=["POST"])
 def update_video_metadata(video_id):
     """
-    Edits Date, Time, Location, Diel Period, Temperature, Count, Notes,
-    File Name, and/or the Marked-for-review flag. Any subset of these can be
-    sent — only the provided keys are changed. Editing
-    date/time/location/diel_period/temperature marks the video as manually
-    edited, which freezes ALL FIVE against being overwritten by OCR if this
-    job is ever re-synced (see sync_videos_from_job).
+    Edits Date, Time, Location, Temperature, Count, Notes, File Name,
+    and/or the Marked-for-review flag. Any subset of these can be sent —
+    only the provided keys are changed. Editing
+    date/time/location/temperature marks the video as manually edited,
+    which freezes them against being overwritten by OCR if this job is ever
+    re-synced (see sync_videos_from_job).
+
+    Diel Period is NOT directly editable: it's derived from date + time +
+    the location's coordinates and is recomputed here whenever any of those
+    three changes. Accepting a manual value would just be overwritten the
+    next time one of its inputs was edited.
     """
     data = request.get_json(force=True)
     allowed_fields = {
-        "date", "time", "location", "diel_period", "temperature", "count", "notes",
+        "date", "time", "location", "temperature", "count", "notes",
         "display_filename", "marked_for_review",
     }
     updates = {k: v for k, v in data.items() if k in allowed_fields}
@@ -1437,15 +1504,31 @@ def update_video_metadata(video_id):
     if "marked_for_review" in updates:
         updates["marked_for_review"] = bool(updates["marked_for_review"])
 
+    # Snapshot the locations before taking videos_lock, so the diel
+    # recomputation below doesn't have to acquire locations_lock while
+    # holding videos_lock (see compute_diel_period).
+    with locations_lock:
+        locations_snapshot = dict(locations)
+
     with videos_lock:
         if video_id not in videos:
             return jsonify({"error": "Unknown video"}), 404
         record = videos[video_id]
 
-        if any(f in updates for f in ("date", "time", "location", "diel_period", "temperature")):
+        if any(f in updates for f in ("date", "time", "location", "temperature")):
             record["metadata_edited"] = True
 
         record.update(updates)
+
+        # Recompute the derived diel period if any of its three inputs just
+        # changed. Done inside the same lock so the stored value can never
+        # disagree with the date/time/location it was derived from.
+        if any(f in updates for f in ("date", "time", "location")):
+            record["diel_period"] = compute_diel_period(
+                record.get("date"), record.get("time"), record.get("location"),
+                locations_snapshot=locations_snapshot,
+            )
+
         result = dict(record)
     save_videos_index()
     return jsonify({**result, "display_species": display_species(result)})
@@ -1532,5 +1615,18 @@ def serve_media(video_id):
 
 
 if __name__ == "__main__":
+    # Development server only. Production runs through Gunicorn — see the
+    # module docstring and gunicorn.conf.py.
+    #
+    # HOST/PORT are read from the environment so this matches how
+    # gunicorn.conf.py is configured, and so the same override works either
+    # way. Relevant on macOS, where AirPlay Receiver holds port 5000
+    # system-wide (System Settings > General > AirDrop & Handoff):
+    #     PORT=8000 python app.py
+    #
     # use_reloader=False is deliberate — see module docstring.
-    app.run(port=5000, use_reloader=False)
+    app.run(
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "5000")),
+        use_reloader=False,
+    )

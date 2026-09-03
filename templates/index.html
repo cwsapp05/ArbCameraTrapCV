@@ -131,9 +131,20 @@
           <label>Date<input type="text" id="review-field-date" placeholder="YYYY-MM-DD"></label>
           <label>Time<input type="text" id="review-field-time" placeholder="HH:MM:SS"></label>
           <label>Location<input type="text" id="review-field-location"></label>
-          <label>Diel Period<input type="text" id="review-field-diel_period"></label>
+          <!-- Temperature moved up into the slot Diel Period used to occupy.
+               Diel Period is now derived from date + time + the location's
+               coordinates (see compute_diel_period in app.py), so there's
+               nothing here to type. -->
           <label>Temperature<input type="text" id="review-field-temperature"></label>
-          <label>Count<input type="number" min="0" id="review-field-count"></label>
+
+          <div class="review-full-width review-count-row">
+            <label for="review-field-count">Count</label>
+            <div class="review-count-stepper">
+              <button type="button" id="review-count-down" class="review-count-btn" aria-label="Decrease count">−</button>
+              <input type="number" min="0" id="review-field-count">
+              <button type="button" id="review-count-up" class="review-count-btn" aria-label="Increase count">+</button>
+            </div>
+          </div>
           <label class="review-full-width">File Name<input type="text" id="review-field-filename"></label>
           <label class="review-full-width">Notes<input type="text" id="review-field-notes"></label>
         </div>
@@ -525,6 +536,7 @@
 
 <footer class="app-credit">
   <p>Created by <strong>Connor Sapp</strong> and <strong>Zach Vernon</strong>, UCF Arboretum Web and App Team, 2026-27</p>
+  <p><a href="https://github.com/cwsapp05/ArbCameraTrapCV/" target="_blank" rel="noopener noreferrer">View source on GitHub</a></p>
 </footer>
 
 <script src="{{ url_for('static', filename='script.js') }}"></script>

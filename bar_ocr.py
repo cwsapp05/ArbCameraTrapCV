@@ -29,12 +29,15 @@ STEP 0b (do this once, not per camera):
 """
 
 import argparse
+import os
 import re
 from datetime import datetime, date
 from pathlib import Path
 
 import cv2
 import pytesseract
+from zoneinfo import ZoneInfo
+
 from astral import LocationInfo
 from astral.sun import sun
 
@@ -56,8 +59,8 @@ CROP_BOXES = {
 # which camera/location name it came from. (Per-location coordinates are
 # recorded separately in the app's own locations list; they aren't used for
 # this calculation.)
-ARBORETUM_LAT = 28.6019   # TODO: fill in the Arboretum's coordinates
-ARBORETUM_LON = -81.1935   # TODO: fill in the Arboretum's coordinates
+ARBORETUM_LAT = 0.0   # TODO: fill in the Arboretum's coordinates
+ARBORETUM_LON = 0.0   # TODO: fill in the Arboretum's coordinates
 
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
@@ -223,20 +226,38 @@ def parse_time(raw):
     return hh, mm, ss
 
 
-def diel_period(dt, lat, lon):
+# Timezone of the camera clocks. astral computes sun times in UTC unless
+# told otherwise, while the burned-in timestamp is local time — comparing
+# the two directly is what made diel_period return "Night" for every hour
+# of the day (a UTC sunset of 00:25 sorts BEFORE a UTC sunrise of 10:27 on
+# the same calendar date, so the "Day" window could never match).
+# Override with TIMEZONE=... if the cameras are ever set to another zone.
+LOCAL_TIMEZONE = os.environ.get("TIMEZONE", "America/New_York")
+
+
+def diel_period(dt, lat, lon, tz_name=None):
     """
     Day/Night/Dawn/Dusk from a datetime + coordinates, using civil twilight
     (astral's default) as the dawn/dusk boundary. dt must be timezone-naive
     LOCAL time matching the camera's own clock.
-    """
-    loc = LocationInfo(latitude=lat, longitude=lon)
-    s = sun(loc.observer, date=dt.date())
 
-    if s["dawn"] <= dt.replace(tzinfo=s["dawn"].tzinfo) < s["sunrise"]:
+    Sun times are requested in that same local zone so both sides of every
+    comparison are in one timezone.
+
+    Raises for polar latitudes on dates where the sun never crosses the
+    twilight threshold (midnight sun / polar night) — astral has no answer
+    there. Callers should handle that; see compute_diel_period in app.py.
+    """
+    tz = ZoneInfo(tz_name or LOCAL_TIMEZONE)
+    loc = LocationInfo(latitude=lat, longitude=lon)
+    s = sun(loc.observer, date=dt.date(), tzinfo=tz)
+
+    aware = dt.replace(tzinfo=tz)
+    if s["dawn"] <= aware < s["sunrise"]:
         return "Dawn"
-    if s["sunrise"].replace(tzinfo=None) <= dt < s["sunset"].replace(tzinfo=None):
+    if s["sunrise"] <= aware < s["sunset"]:
         return "Day"
-    if s["sunset"] <= dt.replace(tzinfo=s["sunset"].tzinfo) < s["dusk"]:
+    if s["sunset"] <= aware < s["dusk"]:
         return "Dusk"
     return "Night"
 
