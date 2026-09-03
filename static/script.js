@@ -95,8 +95,10 @@ document.getElementById("browse-btn").addEventListener("click", async () => {
 
 function updateRunBtnState() {
   const folder = folderInput.value;
-  const location = document.getElementById("upload-location-select").value;
-  runBtn.disabled = !folder || !location || location === ADD_LOCATION_VALUE;
+  // Must EXACTLY match a known location — a partially typed name is not a
+  // valid selection, and the backend rejects unknown locations anyway.
+  const location = document.getElementById("upload-location-input").value.trim();
+  runBtn.disabled = !folder || !location || !isKnownLocation(location);
 }
 
 runBtn.addEventListener("click", async () => {
@@ -120,7 +122,7 @@ runBtn.addEventListener("click", async () => {
 
 async function submitProcessingJob(ocrConfig) {
   const folder = folderInput.value;
-  const location = document.getElementById("upload-location-select").value;
+  const location = document.getElementById("upload-location-input").value.trim();
   const confirmationEl = document.getElementById("submit-confirmation");
 
   runBtn.disabled = true;
@@ -149,61 +151,118 @@ async function submitProcessingJob(ocrConfig) {
 }
 
 // ==================== Upload tab: Location field ====================
-const ADD_LOCATION_VALUE = "__add_new_location__";
-let uploadLocationPreviousValue = "";
+// Predictive text rather than a dropdown: the list of camera sites grows
+// over time and typing a few characters beats scrolling. The field only
+// counts as filled when its text EXACTLY matches a known location — see
+// updateRunBtnState — so a half-typed name can't be submitted.
+const MAX_LOCATION_SUGGESTIONS = 4;
+let knownLocationNames = [];
 
 async function loadUploadLocationOptions() {
   const res = await fetch("/api/locations");
   const allLocations = await res.json();
-  const select = document.getElementById("upload-location-select");
-  const previousValue = select.value; // preserve the selection across refreshes if it's still valid
+  knownLocationNames = Object.keys(allLocations).sort();
 
-  select.innerHTML = "";
-  const placeholderOpt = document.createElement("option");
-  placeholderOpt.value = "";
-  placeholderOpt.textContent = "Select a location…";
-  placeholderOpt.disabled = true;
-  select.appendChild(placeholderOpt);
-
-  Object.keys(allLocations).sort().forEach(name => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    select.appendChild(opt);
-  });
-
-  const addOpt = document.createElement("option");
-  addOpt.value = ADD_LOCATION_VALUE;
-  addOpt.textContent = "+ Add new location";
-  select.appendChild(addOpt);
-
-  select.value = (previousValue && Object.prototype.hasOwnProperty.call(allLocations, previousValue))
-    ? previousValue
-    : "";
-  uploadLocationPreviousValue = select.value;
+  // If the current text no longer names a real location (e.g. it was
+  // renamed or deleted in Settings), clear it rather than leaving
+  // something that looks valid but isn't.
+  const input = document.getElementById("upload-location-input");
+  if (input.value.trim() && !isKnownLocation(input.value)) {
+    input.value = "";
+  }
   updateRunBtnState();
 }
 
-document.getElementById("upload-location-select").addEventListener("change", (e) => {
-  if (e.target.value === ADD_LOCATION_VALUE) {
-    openAddLocationModal();
+function isKnownLocation(text) {
+  return knownLocationNames.includes(text.trim());
+}
+
+function closeLocationAutofill() {
+  document.getElementById("upload-location-autofill").classList.add("hidden");
+  document.getElementById("upload-location-input").setAttribute("aria-expanded", "false");
+}
+
+function renderLocationAutofill(query) {
+  const dropdown = document.getElementById("upload-location-autofill");
+  const input = document.getElementById("upload-location-input");
+  const typed = query.trim();
+  const q = typed.toLowerCase();
+  dropdown.innerHTML = "";
+
+  if (!typed) {
+    closeLocationAutofill();
     return;
   }
-  uploadLocationPreviousValue = e.target.value;
-  updateRunBtnState();
+
+  const matches = knownLocationNames
+    .filter(name => name.toLowerCase().includes(q))
+    .slice(0, MAX_LOCATION_SUGGESTIONS);
+
+  matches.forEach(name => {
+    const item = document.createElement("div");
+    item.className = "autofill-item";
+    item.textContent = name;
+    // mousedown (not click) fires before the input's blur, so the
+    // selection registers before the dropdown closes under the cursor.
+    item.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      input.value = name;
+      closeLocationAutofill();
+      updateRunBtnState();
+    });
+    dropdown.appendChild(item);
+  });
+
+  // "Add new location" goes last, and is omitted when the text already
+  // names an existing location exactly — there'd be nothing to add.
+  const exactMatch = knownLocationNames.some(n => n.toLowerCase() === q);
+  if (!exactMatch) {
+    const addItem = document.createElement("div");
+    addItem.className = "autofill-item autofill-item-add";
+    addItem.textContent = `Add new location "${typed}"`;
+    addItem.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      closeLocationAutofill();
+      openAddLocationModal(typed);
+    });
+    dropdown.appendChild(addItem);
+  }
+
+  dropdown.classList.toggle("hidden", dropdown.children.length === 0);
+  input.setAttribute("aria-expanded", dropdown.children.length > 0 ? "true" : "false");
+}
+
+const uploadLocationInput = document.getElementById("upload-location-input");
+
+uploadLocationInput.addEventListener("input", () => {
+  renderLocationAutofill(uploadLocationInput.value);
+  updateRunBtnState(); // typing a partial name must not leave the button enabled
+});
+uploadLocationInput.addEventListener("focus", () => {
+  renderLocationAutofill(uploadLocationInput.value);
+});
+uploadLocationInput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLocationAutofill();
 });
 
-function openAddLocationModal() {
-  document.getElementById("add-location-modal-name").value = "";
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".upload-location-wrap")) return;
+  closeLocationAutofill();
+});
+
+// name is prefilled and locked when opened from the "Add new location"
+// suggestion — it was already typed, and letting it be edited here would
+// mean the field ends up holding a name the user never chose.
+function openAddLocationModal(prefillName = "") {
+  document.getElementById("add-location-modal-name").value = prefillName;
   document.getElementById("add-location-modal-lat").value = "";
   document.getElementById("add-location-modal-lon").value = "";
   document.getElementById("add-location-modal").classList.remove("hidden");
+  document.getElementById("add-location-modal-lat").focus();
 }
 
 document.getElementById("add-location-modal-close-btn").addEventListener("click", () => {
   document.getElementById("add-location-modal").classList.add("hidden");
-  // Revert — "+ Add new location" itself is never a valid selection.
-  document.getElementById("upload-location-select").value = uploadLocationPreviousValue;
   updateRunBtnState();
 });
 
@@ -239,10 +298,11 @@ document.getElementById("add-location-modal-save-btn").addEventListener("click",
 
   document.getElementById("add-location-modal").classList.add("hidden");
   await loadUploadLocationOptions();
-  document.getElementById("upload-location-select").value = name;
-  uploadLocationPreviousValue = name;
+  // Select the location that was just created.
+  document.getElementById("upload-location-input").value = name;
   updateRunBtnState();
 });
+
 
 // ==================== OCR Settings (dropdown + configuration wizard) ====================
 const SKIP_OCR_VALUE = "__skip_ocr__"; // still used internally when OCR is globally disabled — see loadOcrDisabledState

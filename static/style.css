@@ -2247,3 +2247,26 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+/* ---- Upload tab: predictive Location field ---- */
+.upload-location-wrap {
+  position: relative; /* anchors .autofill-dropdown */
+}
+.upload-location-wrap input { width: 100%; }
+
+/* The "Add new location" suggestion, always last in the list. Visually
+   separated so it doesn't get mistaken for an existing location. */
+.autofill-item.autofill-item-add {
+  border-top: 1px solid #edf0f3;
+  color: #2563eb;
+  font-weight: 600;
+}
+.autofill-item.autofill-item-add:hover { background: #eff6ff; }
+
+/* Prefilled + locked when the modal is opened from that suggestion — the
+   name is already decided at that point, so it reads as fixed. */
+#add-location-modal-name[readonly] {
+  background: #f6f7f9;
+  color: #57606a;
+  cursor: default;
+}

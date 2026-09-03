@@ -58,8 +58,12 @@
       </div>
 
       <div id="upload-location-field-wrap">
-        <label>Location</label>
-        <select id="upload-location-select"></select>
+        <label for="upload-location-input">Location</label>
+        <div class="upload-location-wrap">
+          <input type="text" id="upload-location-input" placeholder="Start typing a location…"
+                 autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false">
+          <div id="upload-location-autofill" class="autofill-dropdown hidden"></div>
+        </div>
       </div>
 
       <div id="upload-ocr-field-wrap">
@@ -479,7 +483,7 @@
     </div>
     <div class="add-location-modal-form">
       <label>Name</label>
-      <input type="text" id="add-location-modal-name" placeholder="Location name">
+      <input type="text" id="add-location-modal-name" placeholder="Location name" readonly>
       <label>Latitude</label>
       <input type="number" step="any" id="add-location-modal-lat" placeholder="Latitude">
       <label>Longitude</label>
