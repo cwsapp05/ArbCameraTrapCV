@@ -66,8 +66,6 @@ threads = 8
 
 # Several requests legitimately outlast Gunicorn's 30s default:
 #   - /api/ocr-wizard/first-frame decodes a frame from a large video
-#   - /api/pick-folder blocks on a native folder dialog until the user
-#     actually picks something (or cancels)
 # Killing those mid-flight would look like a random failure to the user.
 timeout = 300
 graceful_timeout = 30

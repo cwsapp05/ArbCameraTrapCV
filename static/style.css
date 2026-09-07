@@ -73,6 +73,21 @@ h3 { font-size: 0.95rem; margin: 0 0 0.6rem 0; }
   margin-bottom: 1rem;
 }
 
+.dashed-add-card {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 2px dashed #2563eb;
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+  color: #2563eb;
+  font-size: 0.95rem;
+  font-weight: 600;
+  white-space: normal;
+}
+.dashed-add-card:hover { background: rgba(37, 99, 235, 0.06); }
+
 label {
   display: block;
   font-size: 0.85rem;
@@ -83,7 +98,7 @@ label {
 }
 label:first-child { margin-top: 0; }
 
-input[type="text"], select {
+input[type="text"], input[type="password"], select {
   width: 100%;
   padding: 0.55rem 0.7rem;
   border: 1px solid #d0d5dc;
@@ -95,11 +110,66 @@ input[type="text"], select {
 .folder-row { display: flex; gap: 0.5rem; }
 .folder-row input { flex: 1; }
 
-#upload-location-field-wrap {
+.upload-tab-hint {
+  margin-top: 0.6rem;
+  margin-bottom: 0;
+}
+
+.pending-upload-card .pending-upload-folder {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.upload-progress-wrap {
+  margin-top: 0.9rem;
+}
+
+.upload-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.upload-progress-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: #e2e5ea;
+  overflow: hidden;
+}
+
+.upload-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #2563eb;
+  transition: width 0.15s ease-out;
+}
+
+.upload-progress-label {
+  display: block;
+  margin-top: 0.4rem;
+}
+
+/* Same look as .cancel-job-btn (Queue panel's "cancel processing" button) —
+   a small red outline pill, not a solid button, so cancelling an upload
+   doesn't visually compete with Start Processing/Cancel Upload's more
+   prominent filled buttons. */
+.cancel-upload-btn {
+  background: none;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.cancel-upload-btn:hover { background: #fef2f2; }
+
+.upload-location-field-wrap {
   margin-top: 1rem;
 }
 
-#upload-ocr-field-wrap {
+.upload-ocr-field-wrap {
   margin-top: 1rem;
 }
 
@@ -122,7 +192,7 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 }
 .secondary-btn:hover { background: #444b53; }
 
-#run-btn { margin-top: 1.1rem; width: 100%; }
+.run-btn { display: block; margin-top: 1.1rem; width: 100%; }
 
 .status-box {
   margin-top: 1rem;
@@ -659,6 +729,33 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 
 @media (max-width: 800px) {
   .review-layout { grid-template-columns: 1fr; }
+}
+
+/* ---- Mobile ----
+   Signed-out visitors only ever see Library/Favorites (see SIGNED_OUT_TABS
+   in script.js), so this is effectively their whole app on a phone — worth
+   treating as its own pass rather than just letting the desktop grid
+   breakpoints fall where they may. Everything here still applies if
+   someone happens to sign in on a phone too; there's no separate
+   signed-in-on-mobile layout. */
+@media (max-width: 640px) {
+  body { padding: 1rem; }
+
+  h1 { font-size: 1.6rem; }
+  #title-emoji { font-size: 1.4rem; }
+
+  .tab-btn { font-size: 1.1rem; padding: 0.7rem 0.9rem; }
+
+  /* One video per row — a multi-column grid of already-small thumbnails
+     just makes every video harder to make out on a phone. */
+  .video-grid { grid-template-columns: 1fr; }
+
+  /* Fewer, bigger category cards instead of auto-fill cramming in as many
+     as technically fit at their desktop size. */
+  .species-group-cards { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+  .species-group-card { padding: 1.5rem 1rem; }
+  .species-group-label { font-size: 1.15rem; }
+  .species-group-count { font-size: 0.95rem; }
 }
 
 .review-layout.review-swipe-exit-left { transform: translateX(-50px); opacity: 0; }
@@ -2159,13 +2256,6 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   border: 1px solid #d6dae0;
 }
 .account-btn:hover { background: #d6dae0; color: #1f2328; }
-/* Signed in: filled treatment so the state is readable without opening the menu. */
-.account-btn.signed-in {
-  background: #2563eb;
-  color: white;
-  border-color: #2563eb;
-}
-.account-btn.signed-in:hover { background: #1d4ed8; }
 
 .account-menu {
   position: absolute;
@@ -2200,6 +2290,24 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   margin-top: 0.9rem;
   padding: 0.45rem 0.8rem;
   font-size: 0.85rem;
+}
+
+#account-login-form {
+  width: 220px;
+}
+#account-login-form label {
+  font-size: 0.8rem;
+  margin-top: 0.7rem;
+}
+#account-login-form label:first-of-type { margin-top: 0.6rem; }
+#account-login-form input {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+}
+.account-login-error {
+  color: #dc2626;
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
 }
 
 /* ---- Review tab: Count row with prominent steppers ---- */

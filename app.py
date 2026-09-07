@@ -4,9 +4,11 @@ SpeciesNet Web Interface — Flask backend.
 Core model: each SUBMITTED FOLDER becomes a job that's queued and run through
 run_md_and_speciesnet. Every VIDEO inside that folder becomes a persistent
 library entry — tagged animal/species/blank by the AI, correctable by staff,
-favoritable as a shared team collection, and searchable by species. The
-uploaded video itself is never moved or deleted; it's served in place from
-wherever it was submitted from.
+favoritable as a shared team collection, and searchable by species. Folders
+are picked on the user's own device and chunk-uploaded into this server's
+storage (see UPLOADS_DIR / init_upload_batch) rather than referenced by a
+path on the server; once uploaded, a video is never moved or deleted and is
+served in place from there for as long as it exists in the Library.
 
 Run with (development):
     python app.py
@@ -35,14 +37,18 @@ import hashlib
 import io
 import json
 import os
+import secrets
+import shutil
 import subprocess
 import sys
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import wraps
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, abort, Response
+from flask import Flask, jsonify, render_template, request, send_from_directory, abort, Response, session
+from werkzeug.security import check_password_hash
 import cv2
 
 import bar_ocr
@@ -62,6 +68,46 @@ VIDEOS_INDEX_FILE = RUNS_DIR / "videos_index.json"
 SPECIES_LIST_FILE = RUNS_DIR / "species_list.json"
 OCR_CONFIGS_FILE = RUNS_DIR / "ocr_configs.json"
 LOCATIONS_FILE = RUNS_DIR / "locations.json"
+USERS_FILE = RUNS_DIR / "users.json"
+
+# Signs the session cookie (Flask's session is just a signed, NOT encrypted,
+# client-side cookie — nothing sensitive should ever go in it beyond a
+# username). SECRET_KEY env var wins if set (e.g. so every gunicorn/waitress
+# restart in production can share one fixed key); otherwise a key is
+# generated once and persisted here, so restarting the dev server doesn't
+# invalidate every signed-in session. Changing this key logs everyone out.
+SECRET_KEY_FILE = RUNS_DIR / "secret_key.txt"
+
+
+def _load_or_create_secret_key():
+    env_key = os.environ.get("SECRET_KEY")
+    if env_key:
+        return env_key
+    if SECRET_KEY_FILE.exists():
+        return SECRET_KEY_FILE.read_text().strip()
+    key = secrets.token_hex(32)
+    SECRET_KEY_FILE.write_text(key)
+    return key
+
+
+app.secret_key = _load_or_create_secret_key()
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+
+# Folders are picked on the USER'S device, not the server's, so there's no
+# server-local path to point the job at — the bytes have to actually be
+# uploaded. UPLOADS_DIR is where they land, in per-batch subfolders named by
+# batch_id, and they STAY there permanently (never moved/deleted after a job
+# finishes) since /media/<video_id> serves each Library video straight out of
+# its job's folder, same as it always has — see serve_media.
+UPLOADS_DIR = RUNS_DIR / "uploads"
+UPLOADS_DIR.mkdir(exist_ok=True)
+UPLOAD_BATCHES_FILE = RUNS_DIR / "upload_batches_index.json"
+
+# Must match UPLOAD_CHUNK_SIZE in static/script.js — the server writes each
+# chunk at `chunk_index * CHUNK_SIZE` inside the pre-sized destination file,
+# so a mismatch between client and server here would corrupt every upload.
+CHUNK_SIZE = 8 * 1024 * 1024
+MAX_CHUNK_BYTES = CHUNK_SIZE * 2  # generous slack over the expected chunk size
 
 # Reserved dropdown values that are never real saved config names.
 SKIP_OCR_VALUE = "__skip_ocr__"
@@ -90,6 +136,17 @@ videos_lock = threading.Lock()
 
 locations = {}  # location name -> {"lat": float, "lon": float} — only locations with confirmed coordinates
 locations_lock = threading.Lock()
+
+# batch_id -> {"status": "uploading"|"processing", "created_at": ..., "files":
+# {relpath: {"size", "expected_chunks", "received_chunks": [...]}}}. Tracks
+# in-progress and submitted chunked uploads so a dropped connection or a page
+# reload can resume by re-POSTing only the chunks not yet in received_chunks
+# (see /api/uploads). "processing" means the batch was already handed to a
+# job by /api/run — kept around only so job cancellation can find its folder
+# again (see _cleanup_batch_for_job) — the entry is removed once the batch
+# folder itself is deleted, on either successful cancellation or (never,
+# deliberately) on job success, since videos are served from it forever.
+upload_batches_lock = threading.Lock()
 
 canonical_species = []  # full taxonomy the classifier can produce, incl. "blank"
 species_lock = threading.Lock()
@@ -134,6 +191,45 @@ def load_json(path, default):
     return default
 
 
+def load_users():
+    """
+    username (lowercase) -> {"password_hash", "first_name", "last_name"}.
+
+    Deliberately NOT cached in memory like jobs/videos/locations/etc: there's
+    no sign-up flow (see manage_users.py), so accounts are added by editing
+    users.json directly, typically via that script, possibly while the
+    server is already running. Re-reading the file on every login/identity
+    check is cheap (it's tiny) and means a newly-added account works
+    immediately instead of only after a restart.
+    """
+    return load_json(USERS_FILE, {})
+
+
+def current_user():
+    """The signed-in user's record (password_hash included — callers must
+    not echo it back), or None if there's no session or it no longer
+    resolves to a real account (e.g. removed via manage_users.py)."""
+    username = session.get("username")
+    if not username:
+        return None
+    return load_users().get(username)
+
+
+def login_required(view):
+    """
+    Rejects with 401 unless a valid session is present. Used on endpoints
+    that stamp who-did-this onto a record (see correct_species) — trusting
+    a client-supplied name there would make the attribution meaningless,
+    so this must be checked server-side against the actual session.
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if current_user() is None:
+            return jsonify({"error": "Sign-in required"}), 401
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def save_jobs_index():
     with jobs_lock:
         with open(JOBS_INDEX_FILE, "w") as f:
@@ -156,6 +252,31 @@ def save_locations():
     with locations_lock:
         with open(LOCATIONS_FILE, "w") as f:
             json.dump(locations, f, indent=2)
+
+
+def save_upload_batches():
+    with upload_batches_lock:
+        with open(UPLOAD_BATCHES_FILE, "w") as f:
+            json.dump(upload_batches, f, indent=2)
+
+
+def _sanitize_relpath(raw):
+    """
+    Validates a client-supplied file name for an upload batch. Upload
+    batches mirror this app's long-standing "flat folder of videos/images"
+    assumption (see list_media_candidates_in_folder, which never recurses),
+    so exactly one path segment is allowed — this also closes off directory
+    traversal (`../`) and absolute paths, which a crafted request could
+    otherwise use to write outside the batch's own folder.
+    """
+    if not raw or not isinstance(raw, str):
+        raise ValueError("Missing file path")
+    name = raw.replace("\\", "/").strip("/")
+    if not name or "/" in name or name in (".", ".."):
+        raise ValueError("Invalid file path")
+    if Path(name).suffix.lower() not in (VIDEO_EXTENSIONS | PHOTO_EXTENSIONS):
+        raise ValueError("Unsupported file type")
+    return name
 
 
 def save_ocr_configs():
@@ -192,6 +313,7 @@ jobs = load_json(JOBS_INDEX_FILE, {})
 videos = load_json(VIDEOS_INDEX_FILE, {})
 locations = load_json(LOCATIONS_FILE, {})
 canonical_species = load_json(SPECIES_LIST_FILE, [])
+upload_batches = load_json(UPLOAD_BATCHES_FILE, {})
 load_ocr_configs()
 
 # Videos created before Date/Time/Location/Count/Notes/Diel Period existed
@@ -201,6 +323,10 @@ _NEW_FIELD_DEFAULTS = {
     "temperature": None,
     "count": 1, "notes": "", "display_filename": None, "metadata_edited": False,
     "has_bar_crop": False, "media_type": "video", "has_thumbnail": False,
+    # None here (rather than a guessed name) for anything corrected before
+    # accounts existed — there's no real record of who actually did it, and
+    # guessing would be worse than an honest "unknown."
+    "corrected_by": None,
 }
 for _v in videos.values():
     for _key, _default in _NEW_FIELD_DEFAULTS.items():
@@ -460,12 +586,41 @@ def _bbox_touches_edge(bbox, margin=0.02):
     return x <= margin or y <= margin or (x + w) >= (1.0 - margin) or (y + h) >= (1.0 - margin)
 
 
+def _max_animals_per_frame(dets, class_cats, species):
+    """
+    Estimates individual count for `species` as the highest number of that
+    species' detections found together in any single frame — the simplest
+    lower-bound reading of "how many animals showed up at once." Summing
+    detections across the whole clip instead would massively overcount a
+    single animal that lingers in front of the camera for many frames,
+    since MegaDetector re-detects it fresh (with no identity tracking)
+    every frame it's visible in.
+
+    Returns 1 for a blank clip (species is None) or if nothing matches —
+    "at least one" is the honest floor for a video with an identified
+    species but no frame-level count to point to.
+    """
+    if not species:
+        return 1
+    frame_counts = collections.Counter()
+    for d in dets:
+        if "classifications" not in d:
+            continue
+        cls_idx, _ = d["classifications"][0]
+        if class_cats.get(cls_idx, cls_idx) != species:
+            continue
+        frame_counts[d.get("frame_number")] += 1
+    return max(frame_counts.values(), default=1)
+
+
 def sync_videos_from_job(job_id):
     """
     After a job finishes successfully, read its predictions.json and create/
     update one library entry per video: species tag (from SpeciesNet), plus
     Date/Time/Location/Diel Period (from OCR on the video's info bar, via
-    bar_ocr.py) and Count/Notes/File Name (user-editable, defaulted here).
+    bar_ocr.py) and Count/Notes/File Name (user-editable, defaulted here —
+    Count in particular defaults to the max-objects-per-frame estimate from
+    _max_animals_per_frame, not just a flat 1).
     Existing favorited/corrected_species/manually-edited fields on a
     re-synced video are preserved — this never overwrites human input, only
     the AI/OCR-derived fields.
@@ -537,6 +692,8 @@ def sync_videos_from_job(job_id):
             if pool:
                 _, best_frame_number, _ = max(pool, key=lambda c: c[0])
 
+        estimated_count = _max_animals_per_frame(dets, class_cats, ai_species)
+
         vid = video_id_for(job_id, filename)
         job_ocr_config = _resolve_ocr_config(job.get("ocr_config"))
         bar_box = job_ocr_config.get("bar_box") if job_ocr_config else None
@@ -599,7 +756,7 @@ def sync_videos_from_job(job_id):
                 "marked_for_review": existing.get("marked_for_review", True),
                 "corrected_at": existing.get("corrected_at"),
                 **ocr_fields,
-                "count": existing.get("count", 1),
+                "count": existing.get("count", estimated_count),
                 "notes": existing.get("notes", ""),
                 "display_filename": existing.get("display_filename", filename),
                 "metadata_edited": existing.get("metadata_edited", False),
@@ -614,6 +771,25 @@ def display_species(video):
     if video.get("corrected_species"):
         return video["corrected_species"]
     return video.get("ai_species") or "blank"
+
+
+def _cleanup_batch_for_job(job_id):
+    """
+    Deletes a cancelled job's uploaded videos from server storage. Safe to
+    call as soon as a job is confirmed cancelled: sync_videos_from_job only
+    ever runs for a "done" job, so a cancelled job has created zero Library
+    entries and nothing else references these files — unlike a successful
+    job's folder, which stays forever so Library can keep serving from it.
+    """
+    with jobs_lock:
+        job = jobs.get(job_id)
+    batch_id = job.get("batch_id") if job else None
+    if not batch_id:
+        return
+    with upload_batches_lock:
+        upload_batches.pop(batch_id, None)
+    save_upload_batches()
+    shutil.rmtree(UPLOADS_DIR / batch_id, ignore_errors=True)
 
 
 def worker_loop():
@@ -662,6 +838,8 @@ def _execute_job(job_id):
 
     if status == "done":
         sync_videos_from_job(job_id)
+    elif status == "cancelled":
+        _cleanup_batch_for_job(job_id)
 
 
 def _terminate_then_kill(proc):
@@ -694,52 +872,239 @@ worker_thread = threading.Thread(target=worker_loop, daemon=True)
 worker_thread.start()
 
 
+@app.template_global()
+def asset_version(filename):
+    """
+    A cache-busting query value for a static asset, based on its own last-
+    modified time. Without this, browsers can keep serving a stale cached
+    script.js/style.css after a deploy — the exact ID lookups an OLD script
+    expects (e.g. a page-level '#run-btn') can be missing from the NEW HTML,
+    which throws immediately and silently aborts the rest of that script's
+    setup. Appending ?v=<mtime> changes the URL itself whenever the file
+    changes, which forces a fresh fetch regardless of any cache headers.
+    """
+    path = BASE_DIR / "static" / filename
+    return int(path.stat().st_mtime) if path.exists() else 0
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
 
-@app.route("/api/pick-folder", methods=["POST"])
-def pick_folder():
-    """
-    Launches a native folder-selection dialog on the machine running this
-    server (tkinter, in a subprocess — dialogs need to own a main thread,
-    which doesn't mix well with Flask's request-handling threads).
-    """
-    script = (
-        "import tkinter as tk\n"
-        "from tkinter import filedialog\n"
-        "root = tk.Tk()\n"
-        "root.withdraw()\n"
-        "root.attributes('-topmost', True)\n"
-        "path = filedialog.askdirectory(title='Select folder of trail cam videos/images')\n"
-        "print(path)\n"
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=300,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "Folder picker timed out"}), 500
+# ==================== Authentication ====================
+# Username + password, no sign-up: accounts are added out-of-band via
+# manage_users.py (run `python manage_users.py add <username> <first> <last>`
+# on the server). Sessions are Flask's default signed cookie — see
+# app.secret_key above — so there's no server-side session store to manage.
 
-    folder = result.stdout.strip()
-    if not folder:
-        return jsonify({"folder": None})  # user cancelled the dialog
-    return jsonify({"folder": folder})
+
+def _public_user(username, user):
+    """Strips password_hash before a user record ever reaches a response."""
+    return {"username": username, "first_name": user["first_name"], "last_name": user["last_name"]}
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    data = request.get_json(force=True)
+    username = (data.get("username") or "").strip().lower()
+    password = data.get("password") or ""
+
+    user = load_users().get(username)
+    if not user or not check_password_hash(user["password_hash"], password):
+        # Same message either way — confirming "that username doesn't
+        # exist" vs. "wrong password" would let someone enumerate accounts.
+        return jsonify({"error": "Incorrect username or password"}), 401
+
+    session.clear()
+    session["username"] = username
+    session.permanent = True  # honors PERMANENT_SESSION_LIFETIME instead of expiring on browser close
+    return jsonify(_public_user(username, user))
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/me")
+def auth_me():
+    username = session.get("username")
+    if not username:
+        return jsonify({"signed_in": False})
+    user = load_users().get(username)
+    if not user:
+        # Account removed (manage_users.py) since this session was created.
+        session.clear()
+        return jsonify({"signed_in": False})
+    return jsonify({"signed_in": True, **_public_user(username, user)})
+
+
+@app.route("/api/uploads", methods=["POST"])
+@login_required
+def init_upload_batch():
+    """
+    Starts (or resumes) a chunked upload batch for a folder picked on the
+    USER'S device via the browser's folder input — the browser has no way
+    to hand the server a path on that machine, so the bytes have to actually
+    travel over the wire. Pre-sizes (truncates) a destination file for each
+    entry so /api/uploads/<id>/chunk can write any chunk directly to its
+    byte offset in any order, which is what makes upload resumable and lets
+    multiple files transfer concurrently.
+
+    Body: {"files": [{"path": "IMG_0001.mp4", "size": 12345}, ...],
+           "resume_batch_id": optional — an in-progress batch (still in
+           the "uploading" state) to continue rather than starting over,
+           matched by the client against its own localStorage record of an
+           interrupted upload for this same folder}.
+
+    Returns {"batch_id", "folder", "received": {path: [chunk_index, ...]}}
+    — "received" tells the client which chunks of which files are already
+    on disk, so a resume only re-sends what's actually missing.
+    """
+    data = request.get_json(force=True)
+    files = data.get("files") or []
+    if not files:
+        return jsonify({"error": "No files to upload"}), 400
+
+    cleaned = []
+    for f in files:
+        try:
+            rel = _sanitize_relpath(f.get("path"))
+            size = int(f.get("size"))
+            if size < 0:
+                raise ValueError("Negative size")
+        except (ValueError, TypeError):
+            return jsonify({"error": f"Invalid file entry: {f.get('path')!r}"}), 400
+        cleaned.append((rel, size))
+
+    resume_id = data.get("resume_batch_id")
+    with upload_batches_lock:
+        resumable = bool(
+            resume_id and upload_batches.get(resume_id, {}).get("status") == "uploading"
+        )
+        batch_id = resume_id if resumable else uuid.uuid4().hex[:16]
+        if not resumable:
+            upload_batches[batch_id] = {
+                "status": "uploading",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "files": {},
+            }
+        manifest = upload_batches[batch_id]
+
+        batch_dir = UPLOADS_DIR / batch_id
+        batch_dir.mkdir(parents=True, exist_ok=True)
+
+        received = {}
+        for rel, size in cleaned:
+            expected_chunks = max(1, -(-size // CHUNK_SIZE))  # ceil division
+            existing = manifest["files"].get(rel)
+            if existing and existing["size"] == size:
+                # Already known from a previous /api/uploads call for this
+                # batch (a genuine resume) — keep whatever chunks it already
+                # has rather than truncating the file back to empty.
+                received[rel] = existing["received_chunks"]
+                continue
+            with open(batch_dir / rel, "wb") as fh:
+                fh.truncate(size)
+            manifest["files"][rel] = {
+                "size": size, "expected_chunks": expected_chunks, "received_chunks": [],
+            }
+            received[rel] = []
+    save_upload_batches()
+
+    return jsonify({"batch_id": batch_id, "folder": str(batch_dir), "received": received})
+
+
+@app.route("/api/uploads/<batch_id>/chunk", methods=["POST"])
+@login_required
+def upload_chunk(batch_id):
+    """Writes one chunk of one file in a batch to its byte offset on disk (see init_upload_batch)."""
+    with upload_batches_lock:
+        manifest = upload_batches.get(batch_id)
+        if not manifest or manifest["status"] != "uploading":
+            return jsonify({"error": "Unknown or already-submitted upload batch"}), 404
+
+        try:
+            rel = _sanitize_relpath(request.form.get("path"))
+            chunk_index = int(request.form.get("chunk_index"))
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid chunk metadata"}), 400
+
+        file_entry = manifest["files"].get(rel)
+        if file_entry is None:
+            return jsonify({"error": "This file was not declared when the batch was created"}), 400
+        if chunk_index < 0 or chunk_index >= file_entry["expected_chunks"]:
+            return jsonify({"error": "Chunk index out of range for this file's size"}), 400
+
+    chunk = request.files.get("chunk")
+    if chunk is None:
+        return jsonify({"error": "Missing chunk data"}), 400
+    payload = chunk.read(MAX_CHUNK_BYTES + 1)
+    if len(payload) > MAX_CHUNK_BYTES:
+        return jsonify({"error": "Chunk exceeds the maximum allowed size"}), 400
+
+    with open(UPLOADS_DIR / batch_id / rel, "r+b") as fh:
+        fh.seek(chunk_index * CHUNK_SIZE)
+        fh.write(payload)
+
+    with upload_batches_lock:
+        if chunk_index not in file_entry["received_chunks"]:
+            file_entry["received_chunks"].append(chunk_index)
+        file_complete = len(file_entry["received_chunks"]) >= file_entry["expected_chunks"]
+    save_upload_batches()
+
+    return jsonify({"ok": True, "file_complete": file_complete})
+
+
+@app.route("/api/uploads/<batch_id>", methods=["DELETE"])
+@login_required
+def delete_upload_batch(batch_id):
+    """
+    Cancels an in-progress upload and deletes whatever bytes made it to
+    disk — used both when the user explicitly cancels mid-upload and, going
+    forward, would be a no-op for anything already handed to a job (status
+    "processing"), since that cleanup instead goes through job cancellation
+    (see _cleanup_batch_for_job) so it can't race with a job that just
+    started reading these files.
+    """
+    with upload_batches_lock:
+        manifest = upload_batches.get(batch_id)
+        if manifest is None:
+            return jsonify({"deleted": batch_id})  # already gone — nothing to do
+        if manifest["status"] != "uploading":
+            return jsonify({"error": f"Upload is already {manifest['status']} — cancel the job instead"}), 400
+        del upload_batches[batch_id]
+    save_upload_batches()
+    shutil.rmtree(UPLOADS_DIR / batch_id, ignore_errors=True)
+    return jsonify({"deleted": batch_id})
 
 
 @app.route("/api/run", methods=["POST"])
+@login_required
 def run_job():
     data = request.get_json(force=True)
-    folder = (data.get("folder") or "").strip()
+    batch_id = (data.get("batch_id") or "").strip()
+    display_name = (data.get("folder_name") or "").strip()
     ocr_config = (data.get("ocr_config") or "").strip()
     location = (data.get("location") or "").strip()
 
-    if not folder:
-        return jsonify({"error": "No folder provided"}), 400
-    if not Path(folder).is_dir():
-        return jsonify({"error": f"Folder not found: {folder}"}), 400
+    if not batch_id:
+        return jsonify({"error": "No uploaded folder provided"}), 400
+    with upload_batches_lock:
+        manifest = upload_batches.get(batch_id)
+        if manifest is None:
+            return jsonify({"error": "Unknown upload — it may have been cancelled or already submitted"}), 400
+        if manifest["status"] != "uploading":
+            return jsonify({"error": f"This upload is already {manifest['status']}"}), 400
+        incomplete = sum(
+            1 for f in manifest["files"].values()
+            if len(f["received_chunks"]) < f["expected_chunks"]
+        )
+    if incomplete:
+        return jsonify({"error": f"Upload still in progress — {incomplete} file(s) not fully received yet"}), 400
+    folder = str(UPLOADS_DIR / batch_id)
     if not location:
         return jsonify({"error": "A location is required"}), 400
     with locations_lock:
@@ -777,6 +1142,8 @@ def run_job():
         jobs[job_id] = {
             "id": job_id,
             "folder": folder,
+            "batch_id": batch_id,
+            "display_name": display_name or batch_id,
             "ocr_config": ocr_config,
             "location": location,
             "status": "queued",
@@ -789,6 +1156,10 @@ def run_job():
             "cmd": cmd,
         }
     save_jobs_index()
+
+    with upload_batches_lock:
+        upload_batches[batch_id]["status"] = "processing"
+    save_upload_batches()
 
     with queue_cv:
         job_queue.append(job_id)
@@ -808,6 +1179,7 @@ def list_ocr_configs():
 
 
 @app.route("/api/ocr-configs/disabled", methods=["POST"])
+@login_required
 def set_ocr_disabled():
     """
     Toggles OCR globally on/off (the Settings tab's "Disable OCR" switch).
@@ -825,6 +1197,7 @@ def set_ocr_disabled():
 
 
 @app.route("/api/ocr-configs", methods=["POST"])
+@login_required
 def save_ocr_config():
     """Saves a new named OCR preset (or overwrites one with the same name) from the wizard's final step."""
     data = request.get_json(force=True)
@@ -869,6 +1242,7 @@ def save_ocr_config():
 
 
 @app.route("/api/ocr-configs/<name>", methods=["DELETE"])
+@login_required
 def delete_ocr_config(name):
     """Removes a saved OCR preset. If it was the most-recently-used one, the
     default falls back to 'None' (Skip OCR) rather than pointing at a config
@@ -941,6 +1315,7 @@ def ocr_wizard_first_frame():
 
 
 @app.route("/api/ocr-wizard/preview-readings", methods=["POST"])
+@login_required
 def ocr_wizard_preview_readings():
     """
     Runs the SAME whole-bar-OCR-and-parse the real pipeline uses (see
@@ -1037,12 +1412,16 @@ def get_queue():
 
 
 @app.route("/api/jobs/<job_id>/cancel", methods=["POST"])
+@login_required
 def cancel_job(job_id):
     """
     Cancels a queued job outright (just removes it from the line — it never
     started), or asks a running job to stop (SIGTERM, escalating to SIGKILL
     if it doesn't exit within 5s — see _terminate_then_kill). Useful when the
-    wrong folder got submitted by mistake.
+    wrong folder got submitted by mistake. Either way, once the job is
+    actually confirmed cancelled its uploaded videos are deleted too — see
+    _cleanup_batch_for_job (called here for the queued case, and from
+    _execute_job once a running job's process has actually exited).
     """
     with jobs_lock:
         job = jobs.get(job_id)
@@ -1067,6 +1446,7 @@ def cancel_job(job_id):
 
         if still_queued:
             save_jobs_index()  # called AFTER releasing jobs_lock — save_jobs_index acquires it itself
+            _cleanup_batch_for_job(job_id)
             return jsonify({"status": "cancelled"})
 
     if status == "running":
@@ -1155,6 +1535,7 @@ def list_missing_locations():
 
 
 @app.route("/api/locations/delete", methods=["POST"])
+@login_required
 def delete_location():
     """
     Removes a location from the curated list.
@@ -1187,6 +1568,7 @@ def delete_location():
 
 
 @app.route("/api/locations/merge", methods=["POST"])
+@login_required
 def merge_locations():
     """
     One endpoint covers three location-editing actions from the Settings
@@ -1313,6 +1695,7 @@ def _parse_locations_csv(content):
 
 
 @app.route("/api/locations/import-csv/preview", methods=["POST"])
+@login_required
 def preview_locations_csv():
     """
     Parses and validates an uploaded CSV WITHOUT writing anything, and
@@ -1356,6 +1739,7 @@ def preview_locations_csv():
 
 
 @app.route("/api/locations/import-csv/commit", methods=["POST"])
+@login_required
 def commit_locations_csv():
     """
     Actually writes a previously-previewed set of rows into the locations
@@ -1432,6 +1816,7 @@ def list_videos():
 
 
 @app.route("/api/videos/<video_id>/favorite", methods=["POST"])
+@login_required
 def set_favorite(video_id):
     data = request.get_json(force=True)
     favorited = bool(data.get("favorited"))
@@ -1445,6 +1830,7 @@ def set_favorite(video_id):
 
 
 @app.route("/api/videos/<video_id>/correct", methods=["POST"])
+@login_required
 def correct_species(video_id):
     data = request.get_json(force=True)
     species = (data.get("species") or "").strip()
@@ -1454,12 +1840,17 @@ def correct_species(video_id):
     if species and species not in valid:
         return jsonify({"error": f"'{species}' isn't a recognized species label"}), 400
 
+    user = current_user()  # guaranteed non-None by @login_required
     with videos_lock:
         if video_id not in videos:
             return jsonify({"error": "Unknown video"}), 404
         # empty string clears the correction, reverting to the AI's own tag
         videos[video_id]["corrected_species"] = species or None
         videos[video_id]["corrected_at"] = datetime.now().isoformat(timespec="seconds")
+        # Stamped from the SESSION, never from anything the client sends —
+        # a client-supplied name would make "Verified by" meaningless, since
+        # anyone could claim to be anyone.
+        videos[video_id]["corrected_by"] = f"{user['first_name']} {user['last_name']}"
         if species:
             # Confirming a species is itself an act of reviewing — clears the
             # mark. Clearing a correction (empty species) is more of an
@@ -1471,6 +1862,7 @@ def correct_species(video_id):
 
 
 @app.route("/api/videos/<video_id>/update", methods=["POST"])
+@login_required
 def update_video_metadata(video_id):
     """
     Edits Date, Time, Location, Temperature, Count, Notes, File Name,
@@ -1535,6 +1927,7 @@ def update_video_metadata(video_id):
 
 
 @app.route("/api/videos/<video_id>/delete", methods=["POST"])
+@login_required
 def delete_video(video_id):
     """
     Removes a video from the library's metadata only. The actual file on
@@ -1557,6 +1950,7 @@ def delete_video(video_id):
 
 
 @app.route("/api/videos/clear-all-marks", methods=["POST"])
+@login_required
 def clear_all_review_marks():
     """Clears marked_for_review on every video at once — the Settings tab's
     bulk 'clear all marked for review' action."""

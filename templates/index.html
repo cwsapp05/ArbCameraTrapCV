@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- Without this, phones render the page at a simulated desktop width
+     (~980px) and zoom out to fit the screen — the page LOOKS "mobile" in
+     the sense of being tiny, but every max-width media query in style.css
+     sees that fake 980px width and never actually triggers. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Trail Cam Species Library</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_version('style.css') }}">
 <!-- Waymark JS (Track tab map). Waymark BUNDLES its own Leaflet and exposes
      it as the `Waymark_L` global; on load it deliberately restores
      `window.L` to whatever it was before, so a bare `L` is NOT available
@@ -19,8 +24,9 @@
   <div class="header-row">
     <h1><span id="title-emoji">🦝</span> UCF Arboretum Trail Cam Species Library</h1>
 
-    <!-- Account menu. The sign-in flow here is a PLACEHOLDER standing in for
-         UCF SSO — see the note above signIn() in script.js. -->
+    <!-- Account menu: username+password sign-in (see /api/auth/* in app.py
+         and the "Account menu" section of script.js). No sign-up here —
+         accounts are added via manage_users.py on the server. -->
     <div class="account-area">
       <button type="button" id="account-btn" class="account-btn" title="Account" aria-haspopup="true" aria-expanded="false">
         <!-- Default profile picture: generic head-and-shoulders silhouette -->
@@ -31,9 +37,20 @@
       </button>
 
       <div id="account-menu" class="account-menu hidden">
-        <div class="account-menu-name" id="account-menu-name">Guest</div>
-        <div class="account-menu-status" id="account-menu-status">Non-User</div>
-        <button type="button" id="account-auth-btn" class="account-auth-btn">Sign in</button>
+        <div id="account-menu-signed-in" class="hidden">
+          <div class="account-menu-name" id="account-menu-name"></div>
+          <div class="account-menu-status" id="account-menu-status"></div>
+          <button type="button" id="account-auth-btn" class="account-auth-btn">Sign out</button>
+        </div>
+        <form id="account-login-form">
+          <div class="account-menu-name">Sign in</div>
+          <label for="account-login-username">Username</label>
+          <input type="text" id="account-login-username" autocomplete="username" required>
+          <label for="account-login-password">Password</label>
+          <input type="password" id="account-login-password" autocomplete="current-password" required>
+          <p id="account-login-error" class="account-login-error hidden"></p>
+          <button type="submit" class="account-auth-btn">Sign in</button>
+        </form>
       </div>
     </div>
   </div>
@@ -50,30 +67,36 @@
 
   <!-- UPLOAD TAB -->
   <section id="tab-upload" class="tab-panel active">
-    <div class="card">
+    <!-- Hidden whenever a pending-upload-card exists (see the
+         MutationObserver on pendingUploadsList in script.js) — add-more-
+         folders-card below takes over as the way to add another once one
+         is already showing. -->
+    <div class="card" id="add-folder-card">
       <label>Folder of videos/images</label>
       <div class="folder-row">
-        <input type="text" id="folder-path" placeholder="No folder selected" readonly>
-        <button id="browse-btn">Browse…</button>
+        <button id="browse-btn" type="button">+ Add folder…</button>
+        <!-- webkitdirectory: the only standard way for a browser to hand
+             back "everything in this folder" (as File objects) — those
+             bytes then have to be uploaded, since the server can't reach a
+             path on the user's own device. See startBatchUpload. -->
+        <input type="file" id="folder-input" webkitdirectory multiple hidden>
       </div>
-
-      <div id="upload-location-field-wrap">
-        <label for="upload-location-input">Location</label>
-        <div class="upload-location-wrap">
-          <input type="text" id="upload-location-input" placeholder="Start typing a location…"
-                 autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false">
-          <div id="upload-location-autofill" class="autofill-dropdown hidden"></div>
-        </div>
-      </div>
-
-      <div id="upload-ocr-field-wrap">
-        <label>Optical Character Recognition (OCR) settings</label>
-        <select id="ocr-config-select"></select>
-      </div>
-
-      <button id="run-btn" disabled>Start Processing</button>
-      <p id="submit-confirmation" class="muted hidden"></p>
+      <p class="muted upload-tab-hint">
+        Each folder uploads independently as soon as you pick it — add
+        another right away without waiting for the first to finish.
+      </p>
     </div>
+
+    <!-- One .pending-upload-card per folder picked, built and appended here
+         by createPendingUploadCard in script.js; removed again once its job
+         is submitted or its upload is cancelled. -->
+    <div id="pending-uploads-list"></div>
+
+    <!-- The inverse of add-folder-card above: hidden until at least one
+         pending-upload-card exists, then this is the way to add another
+         (one button here rather than one repeated inside every card). The
+         whole card IS the button, not a card wrapping one. -->
+    <button type="button" class="dashed-add-card hidden" id="add-more-folders-card">+ Add More Folders</button>
 
     <!-- QUEUE + LIVE LOG (moved here from Library) -->
     <div class="card" id="queue-panel">
@@ -412,7 +435,7 @@
           <span class="species-badge"></span>
           <span class="verified-info hidden">
             <span class="verified-info-icon">i</span>
-            <span class="verified-info-tooltip">Verified by: Connor Sapp</span>
+            <span class="verified-info-tooltip"></span>
           </span>
         </div>
       </div>
@@ -543,6 +566,6 @@
   <p><a href="https://github.com/cwsapp05/ArbCameraTrapCV/" target="_blank" rel="noopener noreferrer">View source on GitHub</a></p>
 </footer>
 
-<script src="{{ url_for('static', filename='script.js') }}"></script>
+<script src="{{ url_for('static', filename='script.js') }}?v={{ asset_version('script.js') }}"></script>
 </body>
 </html>

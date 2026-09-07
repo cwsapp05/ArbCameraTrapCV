@@ -1,12 +1,11 @@
-// ==================== Account state (PLACEHOLDER auth) ====================
-// Declared up here, not beside the account-menu code at the bottom, because
-// isSignedIn() is called during page init (updateLibraryTabBadge, renderGrid).
-// Function declarations hoist; `const` does not — leaving these at the
-// bottom would put them in the temporal dead zone at that point.
-// See the account-menu block at the end of this file for the full context.
-const ACCOUNT_STORAGE_KEY = "arbcam_signed_in";
-const PLACEHOLDER_IDENTITY = { name: "Connor Sapp", status: "Arbling" }; // stand-in for what SSO will return
-const GUEST_IDENTITY = { name: "Guest", status: "Non-User" };
+// ==================== Account state (username+password auth) ====================
+// currentUser mirrors GET /api/auth/me: null when signed out, otherwise
+// {username, first_name, last_name}. Declared up here, not beside the
+// account-menu code at the bottom, because isSignedIn() is called during
+// page init (updateLibraryTabBadge, renderGrid). Function declarations
+// hoist; `let` does not — leaving these at the bottom would put them in
+// the temporal dead zone at that point.
+let currentUser = null;
 
 let queuePollTimer = null;
 let lastQueueSize = 0; // used by pollQueue to detect "a job just finished" (size decreased)
@@ -22,123 +21,357 @@ const TITLE_EMOJIS = ["🦝", "🦌", "🐇", "🐻", "🐰", "🐭", "🐸", "�
 document.getElementById("title-emoji").textContent =
   TITLE_EMOJIS[Math.floor(Math.random() * TITLE_EMOJIS.length)];
 // ---- Tabs ----
-document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    const previousTab = document.querySelector(".tab-btn.active")?.dataset.tab;
-    if (previousTab === "review" && btn.dataset.tab !== "review") {
-      await saveCurrentReviewFields(); // don't lose pending edits when navigating away
-    }
+// Each tab's name lives in the URL hash (#library, #settings, ...) and is
+// pushed onto browser history on every switch, so the back/forward buttons
+// move between tabs the same way they'd move between pages — including
+// after a reload or a shared/bookmarked link landing on a specific tab.
+const TAB_NAMES = Array.from(document.querySelectorAll(".tab-btn")).map(b => b.dataset.tab);
 
-    // Stop any video playing anywhere (a Library/Favorites card, the
-    // Review tab's player, the Spreadsheet's popup) so switching tabs
-    // never leaves something quietly playing in the background.
-    document.querySelectorAll("video").forEach(v => v.pause());
-    currentlyPlayingVideo = null;
-
-    // Close any expanded card (notes panel) in either grid — leaving the
-    // tab shouldn't leave one hanging open in the background.
-    collapseCardInfoPanel("lib-grid", false);
-    collapseCardInfoPanel("fav-grid", false);
-    if (previousTab === "library" && btn.dataset.tab !== "library") {
-      libraryCardOrder = null; // leaving the tab entirely — next visit sorts fresh
-    }
-
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-
-    if (btn.dataset.tab === "upload") {
-      pollQueue();
-      loadUploadHistory();
-      loadOcrConfigOptions();
-      loadUploadLocationOptions();
-    } else {
-      clearTimeout(queuePollTimer);
-    }
-    if (btn.dataset.tab === "review") {
-      loadReviewQueue();
-    }
-    if (btn.dataset.tab === "library") {
-      refreshSpeciesData().then(showLibraryGroups); // always start fresh at the group view
-    }
-    if (btn.dataset.tab === "favorites") {
-      refreshSpeciesData().then(() => {
-        populateFilterDropdown("fav-species-filter");
-        loadFavorites();
-      });
-    }
-    if (btn.dataset.tab === "spreadsheet") {
-      loadSpreadsheet();
-    }
-    if (btn.dataset.tab === "track") {
-      loadTrackTab();
-    }
-    if (btn.dataset.tab === "settings") {
-      loadSettingsTab();
-    }
-  });
-});
-
-// ---- Upload tab: submitting a job ----
-const folderInput = document.getElementById("folder-path");
-const runBtn = document.getElementById("run-btn");
-
-document.getElementById("browse-btn").addEventListener("click", async () => {
-  const res = await fetch("/api/pick-folder", { method: "POST" });
-  const data = await res.json();
-  if (data.folder) {
-    folderInput.value = data.folder;
-    updateRunBtnState();
-  }
-});
-
-function updateRunBtnState() {
-  const folder = folderInput.value;
-  // Must EXACTLY match a known location — a partially typed name is not a
-  // valid selection, and the backend rejects unknown locations anyway.
-  const location = document.getElementById("upload-location-input").value.trim();
-  runBtn.disabled = !folder || !location || !isKnownLocation(location);
+function tabFromHash() {
+  const name = location.hash.slice(1).split("/")[0];
+  return TAB_NAMES.includes(name) ? name : null;
 }
 
-runBtn.addEventListener("click", async () => {
-  const folder = folderInput.value;
-  const ocrConfig = document.getElementById("ocr-config-select").value;
+// Library drills one level deeper than a plain tab: #library/<species>.
+// Only meaningful when the hash's tab segment is actually "library" — a
+// leftover species segment on some other tab's hash (shouldn't happen, but
+// URLs get typed/edited by hand) is just ignored.
+function librarySpeciesFromHash() {
+  const parts = location.hash.slice(1).split("/");
+  if (parts[0] !== "library" || !parts[1]) return null;
+  try {
+    return decodeURIComponent(parts[1]);
+  } catch (e) {
+    return null; // malformed percent-encoding in a hand-edited URL
+  }
+}
 
-  if (ocrConfig === CONFIGURE_NEW_VALUE && !ocrGloballyDisabled) {
-    if (!folder) {
-      alert('Select a folder first — the OCR wizard needs a sample video from that folder.');
-      return;
+// pushState: false is for navigation the browser already knows about —
+// popstate (back/forward) and the initial deep-link activation below —
+// where adding another history entry would just create a duplicate.
+async function activateTab(tabName, { pushState = true } = {}) {
+  if (!TAB_NAMES.includes(tabName)) tabName = "upload";
+
+  const previousTab = document.querySelector(".tab-btn.active")?.dataset.tab;
+  // Re-clicking the CURRENT tab's own button still re-runs everything below
+  // exactly as it always has (e.g. the Library tab uses this to reset out
+  // of a drilled-into species back to the group view) — only the history
+  // entry at the bottom is skipped in that case, so it can't pile up
+  // duplicate entries for a tab that never actually changed.
+  const tabChanged = previousTab !== tabName;
+
+  if (previousTab === "review" && tabName !== "review") {
+    await saveCurrentReviewFields(); // don't lose pending edits when navigating away
+  }
+
+  // Stop any video playing anywhere (a Library/Favorites card, the
+  // Review tab's player, the Spreadsheet's popup) so switching tabs
+  // never leaves something quietly playing in the background.
+  document.querySelectorAll("video").forEach(v => v.pause());
+  currentlyPlayingVideo = null;
+
+  // Close any expanded card (notes panel) in either grid — leaving the
+  // tab shouldn't leave one hanging open in the background.
+  collapseCardInfoPanel("lib-grid", false);
+  collapseCardInfoPanel("fav-grid", false);
+  if (previousTab === "library" && tabName !== "library") {
+    libraryCardOrder = null; // leaving the tab entirely — next visit sorts fresh
+  }
+
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tabName));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + tabName));
+
+  if (tabName === "upload") {
+    pollQueue();
+    loadUploadHistory();
+    loadOcrConfigOptions();
+    loadUploadLocationOptions();
+  } else {
+    clearTimeout(queuePollTimer);
+  }
+  if (tabName === "review") {
+    loadReviewQueue();
+  }
+  if (tabName === "library") {
+    // A genuine click on the Library tab button always starts fresh at the
+    // group view (pushState is true for that case). Landing here via
+    // history navigation or a deep link (pushState: false) instead honors
+    // whatever species the URL says — that's the whole point of giving the
+    // drill-in its own history entry.
+    const species = pushState ? null : librarySpeciesFromHash();
+    if (species) {
+      refreshSpeciesData().then(() => openLibraryGroup(species, { pushState: false }));
+    } else {
+      refreshSpeciesData().then(() => showLibraryGroups({ pushState: false }));
     }
-    // Wizard now opens from here rather than from the dropdown itself —
-    // once it saves successfully, saveOcrWizardConfig submits the job
-    // automatically (see its autoSubmitAfterSave handling).
-    openOcrConfigWizard(folder, { autoSubmitAfterSave: true });
+  }
+  if (tabName === "favorites") {
+    refreshSpeciesData().then(() => {
+      populateFilterDropdown("fav-species-filter");
+      loadFavorites();
+    });
+  }
+  if (tabName === "spreadsheet") {
+    loadSpreadsheet();
+  }
+  if (tabName === "track") {
+    loadTrackTab();
+  }
+  if (tabName === "settings") {
+    loadSettingsTab();
+  }
+
+  if (pushState && tabChanged) {
+    history.pushState({ tab: tabName }, "", "#" + tabName);
+  }
+}
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => activateTab(btn.dataset.tab));
+});
+
+window.addEventListener("popstate", (e) => {
+  activateTab((e.state && e.state.tab) || tabFromHash() || "upload", { pushState: false });
+});
+
+// ==================== Upload tab: pending-upload cards ====================
+// Each folder the user picks becomes its own independent card — its own
+// upload, location, OCR config and Start Processing button — appended to
+// #pending-uploads-list. Uploads across cards run fully concurrently: there
+// is no server-local path to point a job at (folders are picked on the
+// USER'S device), so the bytes always have to travel over the wire, and
+// nothing here makes one folder wait for another. Each card lives from the
+// moment its folder is picked until its job is submitted (or its upload is
+// cancelled), then it's removed — the Queue/History panels below take over
+// showing that job's status.
+const pendingUploadsList = document.getElementById("pending-uploads-list");
+const folderFileInput = document.getElementById("folder-input");
+const addFolderCard = document.getElementById("add-folder-card");
+const addMoreFoldersCard = document.getElementById("add-more-folders-card");
+
+const MEDIA_EXTENSIONS = new Set([
+  ".mp4", ".avi", ".mov", ".mkv", ".m4v", ".wmv",
+  ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif",
+]); // must match VIDEO_EXTENSIONS | PHOTO_EXTENSIONS in app.py
+
+// Exactly one of these two cards is ever showing: add-folder-card (with its
+// full "pick your first folder" hint text) when the list is empty, or
+// add-more-folders-card (one plain button, below every pending card) once
+// something's already there — a repeated "Add More Folders" button inside
+// EVERY card would just be visual noise once there are several. A
+// MutationObserver (rather than calling this by hand at every place a card
+// gets added/removed — created, submitted, cancelled) means it can't drift
+// out of sync with whatever's actually in the list.
+function updateAddFolderCardVisibility() {
+  const hasPending = pendingUploadsList.children.length > 0;
+  addFolderCard.classList.toggle("hidden", hasPending);
+  addMoreFoldersCard.classList.toggle("hidden", !hasPending);
+}
+new MutationObserver(updateAddFolderCardVisibility).observe(pendingUploadsList, { childList: true });
+
+document.getElementById("browse-btn").addEventListener("click", () => {
+  folderFileInput.click();
+});
+
+addMoreFoldersCard.addEventListener("click", () => {
+  folderFileInput.click();
+});
+
+folderFileInput.addEventListener("change", (e) => {
+  const picked = Array.from(e.target.files || []);
+  e.target.value = ""; // otherwise picking the SAME folder twice in a row wouldn't fire another "change"
+  // webkitRelativePath looks like "TopFolder/sub/file.mp4" — only files
+  // directly inside the chosen top-level folder count, matching this app's
+  // existing flat-folder assumption (list_media_candidates_in_folder never
+  // recurses into subfolders either).
+  const topLevel = picked.filter(f => f.webkitRelativePath.split("/").length === 2);
+  const mediaFiles = topLevel.filter(f => MEDIA_EXTENSIONS.has(extOf(f.name)));
+
+  if (!mediaFiles.length) {
+    alert("No photo or video files found directly inside that folder.");
     return;
   }
 
-  await submitProcessingJob(ocrConfig);
+  mediaFiles.forEach(f => { f.relPath = f.name; });
+  mediaFiles.sort((a, b) => a.relPath.localeCompare(b.relPath));
+
+  const folderName = picked[0].webkitRelativePath.split("/")[0];
+  createPendingUploadCard(mediaFiles, folderName);
 });
 
-async function submitProcessingJob(ocrConfig) {
-  const folder = folderInput.value;
-  const location = document.getElementById("upload-location-input").value.trim();
-  const confirmationEl = document.getElementById("submit-confirmation");
+function extOf(filename) {
+  const i = filename.lastIndexOf(".");
+  return i === -1 ? "" : filename.slice(i).toLowerCase();
+}
 
-  runBtn.disabled = true;
+// Builds one card, wires up its (scoped-to-this-card) location/OCR/run
+// controls, and kicks off its upload immediately. The card element itself
+// carries its upload state as card.uploadState — a plain property, not a
+// shared/global slot, is what lets any number of these run side by side.
+function createPendingUploadCard(files, folderName) {
+  const card = document.createElement("div");
+  card.className = "card pending-upload-card";
+  card.innerHTML = `
+    <div class="pending-upload-folder"></div>
+    <div class="upload-progress-wrap">
+      <div class="upload-progress-row">
+        <div class="upload-progress-track"><div class="upload-progress-fill"></div></div>
+        <button type="button" class="cancel-upload-btn">Cancel Upload</button>
+      </div>
+      <span class="upload-progress-label muted"></span>
+    </div>
+    <div class="upload-location-field-wrap">
+      <label>Location</label>
+      <div class="upload-location-wrap">
+        <input type="text" class="upload-location-input" placeholder="Start typing a location…"
+               autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false">
+        <div class="upload-location-autofill autofill-dropdown hidden"></div>
+      </div>
+    </div>
+    <div class="upload-ocr-field-wrap">
+      <label>Optical Character Recognition (OCR) settings</label>
+      <select class="ocr-config-select"></select>
+    </div>
+    <button type="button" class="run-btn" disabled>Start Processing Once Uploaded</button>
+    <p class="submit-confirmation muted hidden"></p>
+  `;
+  card.querySelector(".pending-upload-folder").textContent =
+    `${folderName} (${files.length} file${files.length === 1 ? "" : "s"})`;
+
+  pendingUploadsList.appendChild(card);
+
+  wireLocationField(card);
+  populateOcrConfigSelect(card.querySelector(".ocr-config-select"));
+  applyOcrDisabledUIToCard(card, ocrGloballyDisabled);
+  updateRunBtnState(card); // sets the initial "Start Processing Once Uploaded" label
+
+  card.querySelector(".cancel-upload-btn").addEventListener("click", async () => {
+    if (!confirm("Cancel this upload? Any files already uploaded will be deleted.")) return;
+    await cancelUpload(card);
+  });
+
+  card.querySelector(".run-btn").addEventListener("click", async () => {
+    const upload = card.uploadState;
+    if (!upload) return;
+
+    if (card.pendingOcrConfig !== undefined) {
+      // Second click while scheduled — this button doubles as its own
+      // undo, since it's the only thing still enabled once a card locks
+      // its Location/OCR fields for a scheduled start.
+      card.pendingOcrConfig = undefined;
+      setScheduledUI(card, false);
+      updateRunBtnState(card);
+      return;
+    }
+
+    const ocrConfig = card.querySelector(".ocr-config-select").value;
+
+    if (upload.completed) {
+      await beginProcessing(card, ocrConfig);
+      return;
+    }
+
+    // Upload still running — schedule it instead of making the user wait
+    // around to click again the instant it finishes. Location/OCR are
+    // locked so the eventual auto-start can't be pulled out from under a
+    // choice already made; startBatchUpload's allDone handler picks this
+    // up once the upload actually completes (see card.pendingOcrConfig).
+    card.pendingOcrConfig = ocrConfig;
+    setScheduledUI(card, true);
+  });
+
+  startBatchUpload(card, files, folderName).catch(err => {
+    showUploadProgress(card);
+    card.querySelector(".upload-progress-label").textContent = "Error: " + err.message;
+  });
+}
+
+// Locks (or unlocks) a card's Location/OCR fields for a scheduled start,
+// and turns its Start Processing button into the "undo" control — see the
+// run-btn click handler.
+function setScheduledUI(card, scheduled) {
+  card.querySelector(".upload-location-input").disabled = scheduled;
+  card.querySelector(".ocr-config-select").disabled = scheduled;
+  const btn = card.querySelector(".run-btn");
+  btn.textContent = scheduled ? "Cancel Scheduled Start" : "Start Processing Once Uploaded";
+  btn.classList.toggle("secondary-btn", scheduled);
+}
+
+// Does what a click on a completed upload's Start Processing always did:
+// opens the OCR wizard (which submits once it saves) or submits directly.
+// Called either right from the click handler (upload already finished) or
+// from startBatchUpload's allDone handler (a scheduled start firing once
+// the upload catches up) — see card.pendingOcrConfig.
+async function beginProcessing(card, ocrConfig) {
+  // Re-enable Location/OCR regardless of how we got here — if this fired
+  // from a scheduled start (see setScheduledUI) they're currently locked,
+  // and leaving them that way would strand the card if the OCR wizard
+  // this leads into gets backed out of (closeOcrWizard's restore path
+  // doesn't know about scheduling, it just re-syncs via updateRunBtnState).
+  setScheduledUI(card, false);
+  updateRunBtnState(card); // "Start Processing" label, now that upload.completed is true
+  card.querySelector(".run-btn").disabled = true;
+  // The upload is done (that's the only way this runs) — its progress
+  // bar/Cancel Upload button have done their job and would just be
+  // clutter once processing is actually underway. The upload itself isn't
+  // torn down here, only its UI — closeOcrWizard brings it back if the
+  // OCR wizard gets backed out of.
+  hideUploadProgress(card);
+
+  if (ocrConfig === CONFIGURE_NEW_VALUE && !ocrGloballyDisabled) {
+    // The upload is fully complete by this point, so the wizard always has
+    // real, whole files to read a sample frame from. Wizard now opens from
+    // here rather than from the dropdown itself — once it saves
+    // successfully, saveOcrWizardConfig submits the job automatically (see
+    // its autoSubmitAfterSave handling).
+    openOcrConfigWizard(card, card.uploadState.folder, { autoSubmitAfterSave: true });
+    return;
+  }
+
+  await submitProcessingJob(card, ocrConfig);
+}
+
+function updateRunBtnState(card) {
+  if (card.pendingOcrConfig !== undefined) return; // scheduled — its button manages its own label/state, see setScheduledUI
+  // Must EXACTLY match a known location — a partially typed name is not a
+  // valid selection, and the backend rejects unknown locations anyway.
+  const location = card.querySelector(".upload-location-input").value.trim();
+  const upload = card.uploadState;
+  const btn = card.querySelector(".run-btn");
+  btn.disabled = !location || !isKnownLocation(location);
+  btn.textContent = (upload && upload.completed) ? "Start Processing" : "Start Processing Once Uploaded";
+}
+
+async function submitProcessingJob(card, ocrConfig) {
+  const location = card.querySelector(".upload-location-input").value.trim();
+  const confirmationEl = card.querySelector(".submit-confirmation");
+  const upload = card.uploadState;
+
+  if (!upload || !upload.completed) {
+    confirmationEl.classList.remove("hidden");
+    confirmationEl.textContent = "Error: upload isn't finished yet.";
+    updateRunBtnState(card);
+    return;
+  }
+
   confirmationEl.classList.remove("hidden");
   confirmationEl.textContent = "Submitting…";
-
   const res = await fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ folder, location, ocr_config: ocrConfig }),
+    body: JSON.stringify({
+      batch_id: upload.batchId,
+      folder_name: upload.folderName,
+      location,
+      ocr_config: ocrConfig,
+    }),
   });
   const data = await res.json();
-  updateRunBtnState();
 
   if (data.error) {
     confirmationEl.textContent = "Error: " + data.error;
+    updateRunBtnState(card);
+    showUploadProgress(card); // nothing was submitted — let them retry or cancel
     return;
   }
 
@@ -148,13 +381,206 @@ async function submitProcessingJob(ocrConfig) {
 
   pollQueue(); // refresh immediately rather than waiting for the next tick
   loadUploadHistory();
+  // Brief confirmation, then this folder's status lives in the Queue panel
+  // instead — leaving the card around indefinitely would just be clutter.
+  setTimeout(() => card.remove(), 1500);
 }
 
-// ==================== Upload tab: Location field ====================
+// ---- Upload tab: chunked/resumable upload of one card's folder ----
+// Uploads are chunked (fixed-size pieces, see UPLOAD_CHUNK_SIZE) so a
+// dropped connection loses at most one chunk's worth of retries rather than
+// the whole (possibly multi-GB) file, and resumable so cancelling this tab,
+// a page reload, or a network blip doesn't mean starting over — the server
+// tracks which chunks of which files it already has (see /api/uploads) and
+// this code skips re-sending them. UPLOAD_CONCURRENCY bounds how many files
+// FROM ONE CARD transfer at once — it says nothing about how many cards can
+// run at the same time, which is unbounded (bandwidth and the browser's own
+// per-origin connection limit are the only real ceilings).
+const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024; // must match CHUNK_SIZE in app.py
+const UPLOAD_CONCURRENCY = 3;              // files in flight at once, per card
+const UPLOAD_MAX_RETRIES = 5;
+
+function uploadResumeKey(folderName, files) {
+  // A fingerprint of "this same folder," used only to find a matching
+  // in-progress batch to resume after a page reload — hashing GB-sized
+  // video content just to identify a folder would be far too slow, so this
+  // hashes each file's NAME and SIZE instead. That needs to be reasonably
+  // collision-resistant now that several folders can be uploading at once:
+  // two DIFFERENT folders that happened to share a filename and size (e.g.
+  // camera trap footage named identically by the camera itself) could
+  // otherwise resume into each other's batch and have a real file silently
+  // treated as "already uploaded" — wrong content under the right name,
+  // not just wasted bandwidth.
+  const manifest = folderName + "|" + files.map(f => `${f.relPath}:${f.size}`).join("|");
+  let hash = 0;
+  for (let i = 0; i < manifest.length; i++) {
+    hash = (Math.imul(hash, 31) + manifest.charCodeAt(i)) | 0;
+  }
+  return `pendingUpload:${files.length}:${hash}`;
+}
+
+async function startBatchUpload(card, files, folderName) {
+  const resumeKey = uploadResumeKey(folderName, files);
+  let resumeBatchId;
+  try { resumeBatchId = localStorage.getItem(resumeKey) || undefined; } catch (e) {}
+
+  const initRes = await fetch("/api/uploads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      files: files.map(f => ({ path: f.relPath, size: f.size })),
+      resume_batch_id: resumeBatchId,
+    }),
+  });
+  const initData = await initRes.json();
+  if (initData.error) throw new Error(initData.error);
+  try { localStorage.setItem(resumeKey, initData.batch_id); } catch (e) {}
+
+  const controller = new AbortController();
+  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+  const uploadedBytes = new Map(files.map(f => [f.relPath, 0]));
+
+  const upload = {
+    batchId: initData.batch_id,
+    folder: initData.folder,
+    folderName,
+    resumeKey,
+    aborted: false,
+    completed: false,
+    controller,
+  };
+  card.uploadState = upload; // set immediately so updateRunBtnState sees an in-progress (not-yet-completed) upload
+
+  const fillEl = card.querySelector(".upload-progress-fill");
+  const labelEl = card.querySelector(".upload-progress-label");
+  const updateProgress = () => {
+    const done = [...uploadedBytes.values()].reduce((a, b) => a + b, 0);
+    const pct = totalBytes ? Math.min(100, Math.round((done / totalBytes) * 100)) : 100;
+    fillEl.style.width = pct + "%";
+    labelEl.textContent = `Uploading… ${pct}% (${formatBytes(done)} / ${formatBytes(totalBytes)})`;
+  };
+
+  const uploadFile = async (file) => {
+    const alreadyReceived = new Set(initData.received[file.relPath] || []);
+    const totalChunks = Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK_SIZE));
+    const lastChunkSize = file.size - (totalChunks - 1) * UPLOAD_CHUNK_SIZE;
+    uploadedBytes.set(
+      file.relPath,
+      [...alreadyReceived].reduce((sum, i) => sum + (i === totalChunks - 1 ? lastChunkSize : UPLOAD_CHUNK_SIZE), 0)
+    );
+    updateProgress();
+
+    for (let i = 0; i < totalChunks; i++) {
+      if (upload.aborted) throw new Error("Upload cancelled");
+      if (alreadyReceived.has(i)) continue;
+
+      const start = i * UPLOAD_CHUNK_SIZE;
+      const end = Math.min(start + UPLOAD_CHUNK_SIZE, file.size);
+      const blob = file.slice(start, end);
+
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const form = new FormData();
+          form.append("path", file.relPath);
+          form.append("chunk_index", String(i));
+          form.append("chunk", blob);
+          const res = await fetch(`/api/uploads/${upload.batchId}/chunk`, {
+            method: "POST", body: form, signal: controller.signal,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data.error) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
+          break;
+        } catch (e) {
+          if (upload.aborted) throw new Error("Upload cancelled");
+          if (attempt >= UPLOAD_MAX_RETRIES) throw new Error(`Failed to upload ${file.relPath}: ${e.message}`);
+          await new Promise(r => setTimeout(r, Math.min(1000 * 2 ** attempt, 15000)));
+        }
+      }
+
+      uploadedBytes.set(file.relPath, end);
+      updateProgress();
+    }
+  };
+
+  // Bounded concurrency: a handful of files in flight at once beats
+  // one-at-a-time for throughput, without opening one connection per file
+  // in a batch that can run into the hundreds.
+  async function runPool(items, limit, worker) {
+    let index = 0;
+    async function next() {
+      while (index < items.length) {
+        await worker(items[index++]);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next));
+  }
+
+  showUploadProgress(card);
+  updateProgress();
+
+  const allDone = (async () => {
+    await runPool(files, UPLOAD_CONCURRENCY, uploadFile);
+    try { localStorage.removeItem(resumeKey); } catch (e) {}
+    upload.completed = true;
+
+    if (card.pendingOcrConfig !== undefined) {
+      // "Start Processing Once Uploaded" was clicked earlier — fire the
+      // exact same path a live click on a finished upload would take.
+      const ocrConfig = card.pendingOcrConfig;
+      card.pendingOcrConfig = undefined;
+      await beginProcessing(card, ocrConfig);
+    } else {
+      labelEl.textContent =
+        `Uploaded ${files.length} file${files.length === 1 ? "" : "s"} (${formatBytes(totalBytes)}) — ready to process.`;
+      updateRunBtnState(card);
+    }
+  })();
+  upload.allDone = allDone;
+
+  await allDone; // resolves once every file is fully uploaded — see the module comment above on why the caller waits here
+  return upload;
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+  return `${n.toFixed(1)} ${units[i]}`;
+}
+
+function hideUploadProgress(card) {
+  card.querySelector(".upload-progress-wrap").classList.add("hidden");
+}
+
+function showUploadProgress(card) {
+  card.querySelector(".upload-progress-wrap").classList.remove("hidden");
+}
+
+async function cancelUpload(card) {
+  const upload = card.uploadState;
+  if (!upload) {
+    card.remove();
+    return;
+  }
+  upload.aborted = true;
+  upload.controller.abort();
+  // If it was still pending, it's about to reject with "Upload cancelled"
+  // — nothing awaits it after this point, so swallow it here rather than
+  // leaving an unhandled rejection in the console.
+  upload.allDone.catch(() => {});
+  try { localStorage.removeItem(upload.resumeKey); } catch (e) {}
+  try {
+    await fetch(`/api/uploads/${upload.batchId}`, { method: "DELETE" });
+  } catch (e) {}
+  card.remove();
+}
+
+// ==================== Upload tab: Location field (per card) ====================
 // Predictive text rather than a dropdown: the list of camera sites grows
-// over time and typing a few characters beats scrolling. The field only
-// counts as filled when its text EXACTLY matches a known location — see
-// updateRunBtnState — so a half-typed name can't be submitted.
+// over time and typing a few characters beats scrolling. A card's field
+// only counts as filled when its text EXACTLY matches a known location —
+// see updateRunBtnState — so a half-typed name can't be submitted.
 const MAX_LOCATION_SUGGESTIONS = 4;
 let knownLocationNames = [];
 
@@ -163,34 +589,37 @@ async function loadUploadLocationOptions() {
   const allLocations = await res.json();
   knownLocationNames = Object.keys(allLocations).sort();
 
-  // If the current text no longer names a real location (e.g. it was
-  // renamed or deleted in Settings), clear it rather than leaving
+  // If any open card's typed text no longer names a real location (e.g. it
+  // was renamed or deleted in Settings), clear it rather than leaving
   // something that looks valid but isn't.
-  const input = document.getElementById("upload-location-input");
-  if (input.value.trim() && !isKnownLocation(input.value)) {
-    input.value = "";
-  }
-  updateRunBtnState();
+  document.querySelectorAll(".pending-upload-card").forEach(card => {
+    const input = card.querySelector(".upload-location-input");
+    if (input.value.trim() && !isKnownLocation(input.value)) input.value = "";
+    updateRunBtnState(card);
+  });
 }
 
 function isKnownLocation(text) {
   return knownLocationNames.includes(text.trim());
 }
 
-function closeLocationAutofill() {
-  document.getElementById("upload-location-autofill").classList.add("hidden");
-  document.getElementById("upload-location-input").setAttribute("aria-expanded", "false");
+// Only one location autofill dropdown is ever open at a time in practice,
+// so closing all of them (rather than tracking which card's is open) is
+// simplest and just as correct.
+function closeAllLocationAutofills() {
+  document.querySelectorAll(".upload-location-autofill").forEach(d => d.classList.add("hidden"));
+  document.querySelectorAll(".upload-location-input").forEach(i => i.setAttribute("aria-expanded", "false"));
 }
 
-function renderLocationAutofill(query) {
-  const dropdown = document.getElementById("upload-location-autofill");
-  const input = document.getElementById("upload-location-input");
+function renderLocationAutofill(card, query) {
+  const dropdown = card.querySelector(".upload-location-autofill");
+  const input = card.querySelector(".upload-location-input");
   const typed = query.trim();
   const q = typed.toLowerCase();
   dropdown.innerHTML = "";
 
   if (!typed) {
-    closeLocationAutofill();
+    closeAllLocationAutofills();
     return;
   }
 
@@ -207,8 +636,8 @@ function renderLocationAutofill(query) {
     item.addEventListener("mousedown", (e) => {
       e.preventDefault();
       input.value = name;
-      closeLocationAutofill();
-      updateRunBtnState();
+      closeAllLocationAutofills();
+      updateRunBtnState(card);
     });
     dropdown.appendChild(item);
   });
@@ -222,8 +651,8 @@ function renderLocationAutofill(query) {
     addItem.textContent = `Add new location "${typed}"`;
     addItem.addEventListener("mousedown", (e) => {
       e.preventDefault();
-      closeLocationAutofill();
-      openAddLocationModal(typed);
+      closeAllLocationAutofills();
+      openAddLocationModal(typed, card);
     });
     dropdown.appendChild(addItem);
   }
@@ -232,28 +661,32 @@ function renderLocationAutofill(query) {
   input.setAttribute("aria-expanded", dropdown.children.length > 0 ? "true" : "false");
 }
 
-const uploadLocationInput = document.getElementById("upload-location-input");
-
-uploadLocationInput.addEventListener("input", () => {
-  renderLocationAutofill(uploadLocationInput.value);
-  updateRunBtnState(); // typing a partial name must not leave the button enabled
-});
-uploadLocationInput.addEventListener("focus", () => {
-  renderLocationAutofill(uploadLocationInput.value);
-});
-uploadLocationInput.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeLocationAutofill();
-});
+function wireLocationField(card) {
+  const input = card.querySelector(".upload-location-input");
+  input.addEventListener("input", () => {
+    renderLocationAutofill(card, input.value);
+    updateRunBtnState(card); // typing a partial name must not leave the button enabled
+  });
+  input.addEventListener("focus", () => renderLocationAutofill(card, input.value));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeAllLocationAutofills();
+  });
+}
 
 document.addEventListener("click", (e) => {
   if (e.target.closest(".upload-location-wrap")) return;
-  closeLocationAutofill();
+  closeAllLocationAutofills();
 });
+
+// Which card's location field to fill in once a new location is saved —
+// there's only ever one "Add location" modal open at a time.
+let addLocationModalTargetCard = null;
 
 // name is prefilled and locked when opened from the "Add new location"
 // suggestion — it was already typed, and letting it be edited here would
 // mean the field ends up holding a name the user never chose.
-function openAddLocationModal(prefillName = "") {
+function openAddLocationModal(prefillName = "", card = null) {
+  addLocationModalTargetCard = card;
   document.getElementById("add-location-modal-name").value = prefillName;
   document.getElementById("add-location-modal-lat").value = "";
   document.getElementById("add-location-modal-lon").value = "";
@@ -263,7 +696,7 @@ function openAddLocationModal(prefillName = "") {
 
 document.getElementById("add-location-modal-close-btn").addEventListener("click", () => {
   document.getElementById("add-location-modal").classList.add("hidden");
-  updateRunBtnState();
+  if (addLocationModalTargetCard) updateRunBtnState(addLocationModalTargetCard);
 });
 
 document.getElementById("add-location-modal-save-btn").addEventListener("click", async () => {
@@ -298,9 +731,11 @@ document.getElementById("add-location-modal-save-btn").addEventListener("click",
 
   document.getElementById("add-location-modal").classList.add("hidden");
   await loadUploadLocationOptions();
-  // Select the location that was just created.
-  document.getElementById("upload-location-input").value = name;
-  updateRunBtnState();
+  if (addLocationModalTargetCard) {
+    // Select the location that was just created, on the card that asked for it.
+    addLocationModalTargetCard.querySelector(".upload-location-input").value = name;
+    updateRunBtnState(addLocationModalTargetCard);
+  }
 });
 
 
@@ -309,18 +744,22 @@ const SKIP_OCR_VALUE = "__skip_ocr__"; // still used internally when OCR is glob
 const CONFIGURE_NEW_VALUE = "__configure_new__";
 const OCR_WIZARD_MAX_DISPLAY_WIDTH = 640;
 
-let ocrPreviousSelectValue = null;
-let ocrGloballyDisabled = false; // mirrors the Settings tab's Disable OCR toggle — guards runBtn against opening the wizard when the dropdown is hidden
+let ocrConfigData = { configs: [], last_used: null, disabled: false }; // cached /api/ocr-configs response, applied to every card's dropdown
+let ocrGloballyDisabled = false; // mirrors the Settings tab's Disable OCR toggle — guards against opening the wizard when a card's OCR dropdown is hidden
 
 function applyOcrDisabledUI(disabled) {
   ocrGloballyDisabled = disabled;
-  document.getElementById("upload-ocr-field-wrap").classList.toggle("hidden", disabled);
+  document.querySelectorAll(".pending-upload-card").forEach(card => applyOcrDisabledUIToCard(card, disabled));
 
   const toggle = document.getElementById("ocr-disable-toggle");
   toggle.classList.toggle("active", disabled);
   toggle.setAttribute("aria-checked", disabled ? "true" : "false");
 
   document.getElementById("ocr-presets-subsection").classList.toggle("disabled", disabled);
+}
+
+function applyOcrDisabledUIToCard(card, disabled) {
+  card.querySelector(".upload-ocr-field-wrap").classList.toggle("hidden", disabled);
 }
 
 document.getElementById("ocr-disable-toggle").addEventListener("click", async () => {
@@ -336,11 +775,22 @@ document.getElementById("ocr-disable-toggle").addEventListener("click", async ()
 
 async function loadOcrConfigOptions() {
   const res = await fetch("/api/ocr-configs");
-  const data = await res.json();
-  const select = document.getElementById("ocr-config-select");
+  ocrConfigData = await res.json();
+  document.querySelectorAll(".ocr-config-select").forEach(populateOcrConfigSelect);
+  applyOcrDisabledUI(ocrConfigData.disabled);
+}
+
+// Populates one <select> from the cached ocrConfigData — used both for a
+// freshly-created card and to refresh existing ones (e.g. after the wizard
+// saves a new preset from a DIFFERENT card). Keeps whatever this specific
+// select already had chosen if it's still valid, rather than resetting
+// every open card to the global last-used preset just because one of them
+// changed.
+function populateOcrConfigSelect(select) {
+  const previousValue = select.value;
   select.innerHTML = "";
 
-  data.configs.forEach(name => {
+  ocrConfigData.configs.forEach(name => {
     const opt = document.createElement("option");
     opt.value = name;
     opt.textContent = name;
@@ -352,26 +802,21 @@ async function loadOcrConfigOptions() {
   newOpt.textContent = "+ Configure new";
   select.appendChild(newOpt);
 
-  if (data.configs.length === 0) {
+  if (ocrConfigData.configs.length === 0) {
     // No presets configured at all yet — default straight to Configure New
     // rather than leaving the dropdown on an option that doesn't exist.
     select.value = CONFIGURE_NEW_VALUE;
-  } else if (data.last_used && data.configs.includes(data.last_used)) {
-    select.value = data.last_used;
+  } else if (previousValue && ocrConfigData.configs.includes(previousValue)) {
+    select.value = previousValue;
+  } else if (ocrConfigData.last_used && ocrConfigData.configs.includes(ocrConfigData.last_used)) {
+    select.value = ocrConfigData.last_used;
   } else {
     // Last-used preset was removed or never set, but presets DO exist —
     // fall back to whichever sorts first rather than Configure New, since
     // there's already something usable to select.
-    select.value = data.configs[0];
+    select.value = ocrConfigData.configs[0];
   }
-  ocrPreviousSelectValue = select.value;
-
-  await applyOcrDisabledUI(data.disabled);
 }
-
-document.getElementById("ocr-config-select").addEventListener("change", (e) => {
-  ocrPreviousSelectValue = e.target.value;
-});
 
 // ---- Wizard state ----
 // step 1: draw a box around the WHOLE info bar, on the full first frame.
@@ -380,6 +825,9 @@ document.getElementById("ocr-config-select").addEventListener("change", (e) => {
 // Every box is stored in ORIGINAL FULL-FRAME pixel coordinates once
 // confirmed, regardless of which cropped/scaled view it was drawn on —
 // that's the coordinate space bar_ocr.ocr_field() needs on the backend.
+// The wizard modal itself is a single shared instance (you can only
+// configure one thing at a time) — ocrWizardState.card is which pending
+// upload card asked for it.
 let ocrWizardState = null;
 let ocrRectSelection = null; // current rectangle, in CANVAS pixel coordinates
 let ocrFirstClickPoint = null; // set after the first click, cleared once the second click completes the box
@@ -413,9 +861,20 @@ function isInsideRect(pos, rect) {
   return pos.x >= rect.left && pos.x <= rect.right && pos.y >= rect.top && pos.y <= rect.bottom;
 }
 
-function openOcrConfigWizard(folder, options = {}) {
+function openOcrConfigWizard(card, folder, options = {}) {
+  if (ocrWizardState) {
+    // Only one wizard at a time — shouldn't normally happen (a card's own
+    // Start Processing is disabled while ITS wizard is open), but two
+    // DIFFERENT cards could both reach here on a fast double-click.
+    alert("Finish configuring OCR for the folder already open in the wizard first.");
+    updateRunBtnState(card);
+    showUploadProgress(card);
+    return;
+  }
   ocrWizardState = {
+    card,
     folder,
+    previousSelectValue: card.querySelector(".ocr-config-select").value,
     step: 1,
     fullFrameImg: null,
     barBox: null,
@@ -430,8 +889,9 @@ function openOcrConfigWizard(folder, options = {}) {
 
 function closeOcrWizard(restoreSelect) {
   document.getElementById("ocr-wizard-modal").classList.add("hidden");
-  if (ocrWizardState && ocrWizardState.sampleObjectUrl) {
-    URL.revokeObjectURL(ocrWizardState.sampleObjectUrl);
+  const state = ocrWizardState;
+  if (state && state.sampleObjectUrl) {
+    URL.revokeObjectURL(state.sampleObjectUrl);
   }
   ocrWizardState = null;
   ocrRectSelection = null;
@@ -448,8 +908,17 @@ function closeOcrWizard(restoreSelect) {
     document.removeEventListener("mouseup", ocrDocumentMouseUpHandler);
     ocrDocumentMouseUpHandler = null;
   }
-  if (restoreSelect) {
-    document.getElementById("ocr-config-select").value = ocrPreviousSelectValue;
+  if (restoreSelect && state) {
+    state.card.querySelector(".ocr-config-select").value = state.previousSelectValue;
+    // The already-uploaded batch is untouched by backing out of the wizard
+    // (see openOcrConfigWizard — it only opens once the upload is fully
+    // complete), so re-sync rather than leave that card's "Start
+    // Processing" stuck disabled from the click that opened the wizard,
+    // and bring back its progress bar/Cancel Upload button (hidden when
+    // that click fired) since the upload is still sitting there, finished
+    // but unsubmitted, and cancellable again.
+    updateRunBtnState(state.card);
+    showUploadProgress(state.card);
   }
 }
 
@@ -949,6 +1418,7 @@ async function saveOcrWizardConfig() {
     return;
   }
   const state = ocrWizardState;
+  const card = state.card;
   const autoSubmit = state.autoSubmitAfterSave;
   const toArray = (box) => box ? [box.left, box.top, box.right, box.bottom] : null;
 
@@ -971,12 +1441,11 @@ async function saveOcrWizardConfig() {
   }
 
   closeOcrWizard(false);
-  await loadOcrConfigOptions();
-  document.getElementById("ocr-config-select").value = name;
-  ocrPreviousSelectValue = name;
+  await loadOcrConfigOptions(); // refreshes every open card's dropdown, this one included
+  card.querySelector(".ocr-config-select").value = name;
 
   if (autoSubmit) {
-    await submitProcessingJob(name);
+    await submitProcessingJob(card, name);
   }
 }
 
@@ -1054,7 +1523,7 @@ function renderUploadHistory(jobs) {
 
     const folder = document.createElement("span");
     folder.className = "history-folder";
-    folder.textContent = job.folder;
+    folder.textContent = job.display_name || job.folder;
     folder.title = job.folder;
     li.appendChild(folder);
 
@@ -1089,7 +1558,7 @@ function updateRunningLog(runningJobs) {
 
   const job = runningJobs[0]; // single worker thread — at most one running job
   box.classList.remove("hidden");
-  label.textContent = (job.status === "cancelling" ? "Cancelling: " : "Processing: ") + job.folder;
+  label.textContent = (job.status === "cancelling" ? "Cancelling: " : "Processing: ") + (job.display_name || job.folder);
   tail.textContent = job.log_tail || "";
   tail.scrollTop = tail.scrollHeight;
   lastRunningJobId = job.id;
@@ -1101,7 +1570,7 @@ function queueItem(job, kind, position) {
 
   const folder = document.createElement("span");
   folder.className = "queue-folder";
-  folder.textContent = job.folder;
+  folder.textContent = job.display_name || job.folder;
   li.appendChild(folder);
 
   const right = document.createElement("div");
@@ -1119,7 +1588,7 @@ function queueItem(job, kind, position) {
   cancelBtn.textContent = isCancelling ? "Cancelling…" : "Cancel";
   cancelBtn.disabled = isCancelling;
   cancelBtn.addEventListener("click", async () => {
-    const ok = confirm(`Cancel processing for "${job.folder}"?`);
+    const ok = confirm(`Cancel processing for "${job.display_name || job.folder}"? Its uploaded videos will be deleted.`);
     if (!ok) return;
     cancelBtn.disabled = true;
     cancelBtn.textContent = "Cancelling…";
@@ -1269,7 +1738,14 @@ async function saveCurrentReviewFields() {
     body: JSON.stringify(payload),
   });
   const data = await res.json();
-  if (!data.error) Object.assign(v, data);
+  if (data.error) {
+    // This is an autosave (fires on every navigation away from a review
+    // card) — surfacing it is the only way an expired session wouldn't
+    // otherwise quietly lose whatever was just typed.
+    alert(data.error);
+    return;
+  }
+  Object.assign(v, data);
 }
 
 async function reviewAdvance(delta) {
@@ -1393,13 +1869,16 @@ function populateFilterDropdown(selectId) {
 document.getElementById("fav-species-filter").addEventListener("change", loadFavorites);
 
 // ---- Library tab: species group cards + drill-down detail view ----
-function showLibraryGroups() {
+function showLibraryGroups({ pushState = true } = {}) {
   libraryActiveSpecies = null;
   libraryCardOrder = null; // leaving the category — next time it's entered, sort fresh
   collapseCardInfoPanel("lib-grid", false); // close any expanded card without the "just closed" treatment (this isn't a user-initiated close)
   document.getElementById("lib-detail-view").classList.add("hidden");
   document.getElementById("lib-groups-view").classList.remove("hidden");
   renderLibraryGroupCards();
+  if (pushState) {
+    history.pushState({ tab: "library" }, "", "#library");
+  }
 }
 
 function renderLibraryGroupCards() {
@@ -1676,16 +2155,19 @@ function updateSettingsTempUnitButtons() {
 document.getElementById("settings-temp-f-btn").addEventListener("click", () => setTemperatureUnit("F"));
 document.getElementById("settings-temp-c-btn").addEventListener("click", () => setTemperatureUnit("C"));
 
-function openLibraryGroup(label) {
+function openLibraryGroup(label, { pushState = true } = {}) {
   libraryActiveSpecies = label;
   document.getElementById("lib-groups-view").classList.add("hidden");
   document.getElementById("lib-detail-view").classList.remove("hidden");
   document.getElementById("lib-detail-heading").textContent = label;
   loadLibrary();
+  if (pushState) {
+    history.pushState({ tab: "library", species: label }, "", "#library/" + encodeURIComponent(label));
+  }
 }
 
 document.getElementById("lib-back-btn").addEventListener("click", () => {
-  refreshSpeciesData().then(showLibraryGroups); // counts may have changed while drilled in
+  refreshSpeciesData().then(() => showLibraryGroups()); // counts may have changed while drilled in
 });
 
 // ---- Library / Favorites video grids ----
@@ -1727,7 +2209,7 @@ function removeLibraryCard(gridId, videoId) {
   }
 }
 
-function patchLibraryCardSpecies(gridId, videoId, newDisplaySpecies) {
+function patchLibraryCardSpecies(gridId, videoId, newDisplaySpecies, correctedBy) {
   const cardEl = findLibraryCardEl(gridId, videoId);
   if (!cardEl) return;
 
@@ -1735,6 +2217,8 @@ function patchLibraryCardSpecies(gridId, videoId, newDisplaySpecies) {
   badge.textContent = newDisplaySpecies;
   badge.classList.toggle("blank", newDisplaySpecies === "blank");
   cardEl.querySelector(".verified-info").classList.remove("hidden");
+  cardEl.querySelector(".verified-info-tooltip").textContent =
+    correctedBy ? `Verified by: ${correctedBy}` : "Verified";
 
   const select = cardEl.querySelector(".correction-select");
   if (select) select.value = newDisplaySpecies;
@@ -1904,12 +2388,15 @@ function renderGrid(videos, gridId, emptyId) {
     badge.textContent = v.display_species;
     if (v.display_species === "blank") badge.classList.add("blank");
 
-    // "Verified by" is hardcoded for now (single-user assumption) — swap
-    // for the actual editor's name once accounts/auth exist. Independent
-    // from the review mark below — a video can be both verified AND
-    // re-flagged for another look at the same time.
+    // Independent from the review mark below — a video can be both
+    // verified AND re-flagged for another look at the same time.
+    // corrected_by is only present for corrections made after accounts
+    // existed (see correct_species in app.py) — older ones just say
+    // "Verified" with no name attached.
     if (v.corrected_species) {
       card.querySelector(".verified-info").classList.remove("hidden");
+      card.querySelector(".verified-info-tooltip").textContent =
+        v.corrected_by ? `Verified by: ${v.corrected_by}` : "Verified";
     }
     if (v.marked_for_review) {
       // Review state is an internal workflow signal — meaningless to a
@@ -1986,7 +2473,7 @@ function renderGrid(videos, gridId, emptyId) {
       if (activeFilter && data.display_species !== activeFilter) {
         removeLibraryCard(gridIdForTab, v.id);
       } else {
-        patchLibraryCardSpecies(gridIdForTab, v.id, data.display_species);
+        patchLibraryCardSpecies(gridIdForTab, v.id, data.display_species, data.corrected_by);
         if (!data.marked_for_review) {
           const cardEl = findLibraryCardEl(gridIdForTab, v.id);
           const bubble = cardEl && cardEl.querySelector(".unreviewed-corner-bubble");
@@ -2150,7 +2637,7 @@ function expandCardInfoPanel(videoId, gridId, cardEl, v) {
       `Delete "${v.filename}" from the library?\n\nThis only removes it from the library — the file on your computer is NOT deleted.`
     );
     if (!ok) return;
-    await deleteVideo(videoId);
+    if (!(await deleteVideo(videoId))) return; // failed (e.g. session expired) — don't remove it from view if it's still there server-side
     await refreshSpeciesData(); // counts shift when a video disappears
     removeLibraryCard(gridId, videoId);
   });
@@ -2211,11 +2698,20 @@ function buildCorrectionOptions(select, video) {
 }
 
 async function toggleFavorite(videoId, favorited, whichTab) {
-  await fetch(`/api/videos/${videoId}/favorite`, {
+  const res = await fetch(`/api/videos/${videoId}/favorite`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ favorited }),
   });
+  if (!res.ok) {
+    // Most likely a session that expired mid-visit (this button only shows
+    // up signed in to begin with) — the caller already flipped its local
+    // state/label optimistically, so at least surface that it didn't
+    // actually stick server-side rather than leaving it silently wrong.
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || "Couldn't save that — try signing in again.");
+    return;
+  }
   // Library doesn't show favorited-status anywhere on the card itself
   // (only in the expanded notes panel, already updated in place by the
   // caller) — nothing else on screen depends on it, so no reload needed.
@@ -2230,7 +2726,11 @@ async function toggleFavorite(videoId, favorited, whichTab) {
 async function deleteVideo(videoId) {
   const res = await fetch(`/api/videos/${videoId}/delete`, { method: "POST" });
   const data = await res.json();
-  if (data.error) alert(data.error);
+  if (data.error) {
+    alert(data.error);
+    return false;
+  }
+  return true;
 }
 
 async function saveCorrection(videoId, species) {
@@ -2311,6 +2811,11 @@ function renderModalList(query) {
         return;
       }
 
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+
       await refreshSpeciesData();
       const gridIdForTab = whichTab === "lib" ? "lib-grid" : "fav-grid";
       if (whichTab === "fav") populateFilterDropdown("fav-species-filter");
@@ -2321,7 +2826,7 @@ function renderModalList(query) {
       if (activeFilter && data.display_species !== activeFilter) {
         removeLibraryCard(gridIdForTab, targetVideoId);
       } else {
-        patchLibraryCardSpecies(gridIdForTab, targetVideoId, data.display_species);
+        patchLibraryCardSpecies(gridIdForTab, targetVideoId, data.display_species, data.corrected_by);
         if (!data.marked_for_review) {
           const cardEl = findLibraryCardEl(gridIdForTab, targetVideoId);
           const bubble = cardEl && cardEl.querySelector(".unreviewed-corner-bubble");
@@ -2333,6 +2838,21 @@ function renderModalList(query) {
 
     modalList.appendChild(item);
   });
+}
+
+// Deep link on first load (a reload, or a shared/bookmarked #tab URL) —
+// replaceState rather than push, so this doesn't create an extra history
+// entry the very first "back" press would just bounce straight through.
+// Deliberately down here rather than right after activateTab is defined:
+// it calls into per-tab loaders (loadSettingsTab, loadTrackTab, ...) that
+// assume the rest of the script's setup (their own DOM listeners, caches,
+// etc.) has already run.
+{
+  const initialTab = tabFromHash();
+  history.replaceState({ tab: initialTab || "upload" }, "", initialTab ? location.hash : "#upload");
+  if (initialTab && initialTab !== "upload") {
+    activateTab(initialTab, { pushState: false });
+  }
 }
 
 // ---- Initial load ----
@@ -2693,7 +3213,9 @@ function renderSpreadsheet(videos) {
         // real tooltip element here would pollute td.textContent, which
         // copyRowToClipboard/copyEntireTableToClipboard/startCellEdit all
         // read directly.
-        td.dataset.tooltip = v.corrected_species ? "Verified by: Connor Sapp" : "Unverified";
+        td.dataset.tooltip = v.corrected_species
+          ? (v.corrected_by ? `Verified by: ${v.corrected_by}` : "Verified")
+          : "Unverified";
       }
 
       if (field === "filename") {
@@ -2790,11 +3312,16 @@ document.getElementById("ctx-favorite-btn").addEventListener("click", async (e) 
   if (!videoId || !row) return;
 
   const newFavorited = row.dataset.favorited !== "1";
-  await fetch(`/api/videos/${videoId}/favorite`, {
+  const res = await fetch(`/api/videos/${videoId}/favorite`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ favorited: newFavorited }),
   });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || "Couldn't save that — try signing in again.");
+    return;
+  }
   row.dataset.favorited = newFavorited ? "1" : "0";
   patchSpreadsheetVideo(videoId, { favorited: newFavorited });
 });
@@ -2823,7 +3350,7 @@ document.getElementById("ctx-delete-btn").addEventListener("click", async (e) =>
     `Delete "${filenameText}" from the library?\n\nThis only removes it from the library — the file on your computer is NOT deleted.`
   );
   if (!ok) return;
-  await deleteVideo(videoId);
+  if (!(await deleteVideo(videoId))) return; // failed (e.g. session expired) — don't refresh as if it worked
   loadSpreadsheet();
 });
 
@@ -3956,25 +4483,15 @@ async function commitLocationsImport(rows, skippedFromPreview) {
 }
 
 
-// ==================== Account menu (PLACEHOLDER auth) ====================
+// ==================== Account menu (username+password auth) ====================
 //
-// This is a stand-in for UCF SSO, NOT a real authentication system. The
-// signed-in state is just a flag in localStorage: it's client-side only,
-// trivially set by hand, and grants nothing. Nothing in the app checks it,
-// and no endpoint is protected by it.
-//
-// When real SSO arrives, the swap is: signIn() redirects to the UCF IdP,
-// sign-out hits the logout endpoint, and the identity below comes from a
-// server-side session (an endpoint like /api/auth/me) instead of
-// localStorage. Only this block should need to change.
+// Real server-side sessions (a signed cookie — see app.secret_key in
+// app.py) via /api/auth/login|logout|me. currentUser is refreshed from the
+// server on page load (refreshAuthState); isSignedIn() just reads that
+// cached value rather than re-fetching, so it stays safe to call
+// synchronously from anywhere (updateLibraryTabBadge, renderGrid, ...).
 function isSignedIn() {
-  try {
-    return localStorage.getItem(ACCOUNT_STORAGE_KEY) === "1";
-  } catch (e) {
-    // Private browsing / storage disabled — degrade to signed-out rather
-    // than throwing on page load.
-    return false;
-  }
+  return currentUser !== null;
 }
 
 // Tabs a signed-out visitor can see. Everything else is either an editing
@@ -4003,12 +4520,31 @@ function applyAuthVisibility() {
 
 function renderAccountMenu() {
   const signedIn = isSignedIn();
-  const identity = signedIn ? PLACEHOLDER_IDENTITY : GUEST_IDENTITY;
+  document.getElementById("account-menu-signed-in").classList.toggle("hidden", !signedIn);
+  document.getElementById("account-login-form").classList.toggle("hidden", signedIn);
 
-  document.getElementById("account-menu-name").textContent = identity.name;
-  document.getElementById("account-menu-status").textContent = identity.status;
-  document.getElementById("account-auth-btn").textContent = signedIn ? "Sign out" : "Sign in";
-  document.getElementById("account-btn").classList.toggle("signed-in", signedIn);
+  if (signedIn) {
+    document.getElementById("account-menu-name").textContent = `${currentUser.first_name} ${currentUser.last_name}`;
+    document.getElementById("account-menu-status").textContent = `@${currentUser.username}`;
+  }
+}
+
+// The server's session cookie is the only source of truth for who's signed
+// in — called once on page load, and again (via a full reload) right after
+// a successful login/logout rather than trying to reconcile every
+// already-rendered piece of UI in place.
+async function refreshAuthState() {
+  try {
+    const res = await fetch("/api/auth/me");
+    const data = await res.json();
+    currentUser = data.signed_in
+      ? { username: data.username, first_name: data.first_name, last_name: data.last_name }
+      : null;
+  } catch (e) {
+    currentUser = null; // network hiccup — fail closed rather than assume signed in
+  }
+  renderAccountMenu();
+  applyAuthVisibility();
 }
 
 document.getElementById("account-btn").addEventListener("click", (e) => {
@@ -4017,6 +4553,9 @@ document.getElementById("account-btn").addEventListener("click", (e) => {
   const nowOpen = menu.classList.contains("hidden");
   menu.classList.toggle("hidden");
   e.currentTarget.setAttribute("aria-expanded", nowOpen ? "true" : "false");
+  if (nowOpen && !isSignedIn()) {
+    document.getElementById("account-login-username").focus();
+  }
 });
 
 // Click anywhere else closes it, without swallowing clicks inside the menu.
@@ -4028,24 +4567,36 @@ document.addEventListener("click", (e) => {
   document.getElementById("account-btn").setAttribute("aria-expanded", "false");
 });
 
-document.getElementById("account-auth-btn").addEventListener("click", () => {
-  try {
-    if (isSignedIn()) {
-      localStorage.removeItem(ACCOUNT_STORAGE_KEY);
-    } else {
-      localStorage.setItem(ACCOUNT_STORAGE_KEY, "1");
-    }
-  } catch (e) {
-    alert("Sign-in state can't be saved because browser storage is unavailable.");
-    return;
-  }
-  // Reload so the app comes up cleanly in the new state — this also mirrors
-  // how real SSO behaves, since it round-trips through the identity provider.
+// Only rendered in the signed-in view — signing IN goes through the login
+// form's own submit handler below instead, since that needs credentials.
+document.getElementById("account-auth-btn").addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST" });
   window.location.reload();
 });
 
-renderAccountMenu();
-applyAuthVisibility();
+document.getElementById("account-login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("account-login-username").value.trim();
+  const password = document.getElementById("account-login-password").value;
+  const errorEl = document.getElementById("account-login-error");
+  errorEl.classList.add("hidden");
+
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    errorEl.textContent = data.error;
+    errorEl.classList.remove("hidden");
+    document.getElementById("account-login-password").value = "";
+    return;
+  }
+  window.location.reload();
+});
+
+refreshAuthState();
 
 
 // ---- Review tab: Count stepper buttons ----

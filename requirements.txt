@@ -25,3 +25,8 @@ megadetector
 # Production WSGI server (Flask's built-in server is development-only).
 # MUST be run with workers=1 — see gunicorn.conf.py.
 gunicorn
+
+# Windows production server. Gunicorn CANNOT run on Windows (it imports the
+# Unix-only pwd/grp modules and calls os.fork), so Windows hosts use
+# Waitress via serve_windows.py instead. Harmless to install on Linux.
+waitress

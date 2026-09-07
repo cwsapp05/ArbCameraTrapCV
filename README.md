@@ -149,13 +149,40 @@ static/style.css      Styling
 runs/                 Job outputs + metadata stores (gitignored):
                         jobs_index.json, videos_index.json,
                         species_list.json, locations.json,
-                        ocr_configs.json, bar_crops/, thumbnails/
+                        ocr_configs.json, bar_crops/, thumbnails/,
+                        upload_batches_index.json, uploads/ (uploaded
+                        videos — see "How folder upload works" below)
 ```
+
+## How folder upload works
+
+"Browse…" opens a folder picker in the *user's own browser* (via a
+`webkitdirectory` file input) rather than a dialog on the server — the
+server has no way to reach a path on someone else's machine. Clicking
+"Start Processing" chunk-uploads every video/photo directly inside that
+folder into `runs/uploads/<batch_id>/` on the server (8MB chunks, retried
+and resumable — see `/api/uploads*` in `app.py`), then submits the job
+against that server-side copy. Uploaded videos are never deleted after
+processing; they're what the Library serves from. Cancelling a queued or
+running job deletes its batch's uploaded videos, since no Library entries
+exist for a job until it finishes successfully.
+
+## Accounts
+
+Sign-in is username + password, checked against `runs/users.json` (gitignored, like the rest of `runs/`). There's no sign-up page — accounts are added on the server with:
+
+```
+python manage_users.py add <username> <first_name> <last_name>   # prompts for a password
+python manage_users.py list
+python manage_users.py remove <username>
+```
+
+Signing in is what lets someone correct a species — see `correct_species` in `app.py` — and the corrector's name (from their account, not anything the browser sends) is what "Verified by: ..." shows on that video afterward. Everything else (job submission, notes/count edits, favoriting) is still unauthenticated, same as before.
 
 ## Known limitations
 
-- **The "Browse…" button only works on the machine running the server.** It opens a native folder dialog on the *server*, so a remote user clicking it sees nothing happen. Fine when the app is used on the machine it runs on; a blocker for genuine remote use.
-- **No authentication or per-user accounts.** Everyone sees and edits the same library, and simultaneous edits to the same record are last-write-wins.
+- **Folder upload is bandwidth-bound.** Trail cam batches can be many GB, and unlike pointing at a server-local path, that data now has to actually cross the network — slow uplinks make this the bottleneck, not GPU processing time.
+- **No per-user permissions.** Every signed-in account can correct any video and see everything a signed-in view shows; accounts identify *who* made a change, they don't restrict *what* an account can do. Simultaneous edits to the same record are still last-write-wins.
 - OCR accuracy depends on the bar region being drawn accurately in the wizard — leave a few pixels of margin, since a crop clipping a character's edge is the most common cause of misreads.
 - The processing queue is single-worker by design (GPU memory safety); a large batch of folders processes sequentially.
 - Deleting an entry only removes its metadata — if the same folder is reprocessed, it reappears as a fresh, unedited entry.

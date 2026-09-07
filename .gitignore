@@ -2,3 +2,26 @@
 __pycache__/
 runs/
 .venv/
+
+# Secrets / credentials — never commit these
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+cloudflared/
+*.cloudflared/
+
+# Uploaded/served media, in case MEDIA_ROOT ever defaults inside the repo
+media/
+
+# Windows cruft
+Thumbs.db
+desktop.ini
+
+# Editor/OS
+.vscode/
+.idea/
