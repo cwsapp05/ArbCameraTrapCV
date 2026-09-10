@@ -50,6 +50,7 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request, send_from_directory, abort, Response, session
 from werkzeug.security import check_password_hash
 import cv2
+import numpy as np
 
 import bar_ocr
 
@@ -69,6 +70,12 @@ SPECIES_LIST_FILE = RUNS_DIR / "species_list.json"
 OCR_CONFIGS_FILE = RUNS_DIR / "ocr_configs.json"
 LOCATIONS_FILE = RUNS_DIR / "locations.json"
 USERS_FILE = RUNS_DIR / "users.json"
+
+# Per-category (display species) settings shared by every viewer — see the
+# "Category settings" section further down.
+CATEGORY_SETTINGS_FILE = RUNS_DIR / "category_settings.json"
+CATEGORY_COVERS_DIR = RUNS_DIR / "category_covers"
+CATEGORY_COVERS_DIR.mkdir(exist_ok=True)
 
 # Signs the session cookie (Flask's session is just a signed, NOT encrypted,
 # client-side cookie — nothing sensitive should ever go in it beyond a
@@ -150,6 +157,13 @@ upload_batches_lock = threading.Lock()
 
 canonical_species = []  # full taxonomy the classifier can produce, incl. "blank"
 species_lock = threading.Lock()
+
+# display species label -> {"private": bool, "cover": filename|None,
+# "cover_version": int}. Keyed by the label as displayed (same key the
+# Library groups by), so a category keeps its settings no matter which
+# videos are in it at the moment.
+category_settings = {}
+category_settings_lock = threading.Lock()
 
 # Named OCR crop-box presets. Each config: {"bar_box": [l,t,r,b] or None,
 # "date_box": ..., "time_box": ..., "location_box": ...} — any box can be
@@ -254,6 +268,12 @@ def save_locations():
             json.dump(locations, f, indent=2)
 
 
+def save_category_settings():
+    with category_settings_lock:
+        with open(CATEGORY_SETTINGS_FILE, "w") as f:
+            json.dump(category_settings, f, indent=2)
+
+
 def save_upload_batches():
     with upload_batches_lock:
         with open(UPLOAD_BATCHES_FILE, "w") as f:
@@ -314,6 +334,7 @@ videos = load_json(VIDEOS_INDEX_FILE, {})
 locations = load_json(LOCATIONS_FILE, {})
 canonical_species = load_json(SPECIES_LIST_FILE, [])
 upload_batches = load_json(UPLOAD_BATCHES_FILE, {})
+category_settings = load_json(CATEGORY_SETTINGS_FILE, {})
 load_ocr_configs()
 
 # Videos created before Date/Time/Location/Count/Notes/Diel Period existed
@@ -1473,17 +1494,163 @@ def list_jobs():
 
 @app.route("/api/species")
 def list_species():
-    """Full taxonomy plus how many current videos display as each species."""
+    """Full taxonomy plus how many current videos display as each species,
+    and each category's settings (private flag, cover photo). Private
+    categories are left out entirely for signed-out viewers."""
     with videos_lock:
         counts = collections.Counter(display_species(v) for v in videos.values())
     with species_lock:
         species = list(canonical_species)
     if "blank" not in species:
         species.append("blank")
-    return jsonify([
-        {"label": s, "count": counts.get(s, 0)}
-        for s in sorted(species)
-    ])
+    with category_settings_lock:
+        settings_snapshot = {k: dict(v) for k, v in category_settings.items()}
+
+    signed_in = current_user() is not None
+    result = []
+    for s in sorted(species):
+        cfg = settings_snapshot.get(s, {})
+        is_private = bool(cfg.get("private"))
+        if is_private and not signed_in:
+            continue
+        result.append({
+            "label": s,
+            "count": counts.get(s, 0),
+            "private": is_private,
+            "has_cover": bool(cfg.get("cover")),
+            "cover_version": cfg.get("cover_version", 0),
+        })
+    return jsonify(result)
+
+
+# ==================== Category settings ====================
+# A "category" is a display species as grouped in the Library tab. Private
+# categories are hidden from signed-out visitors everywhere media is served
+# (species list, video listings, media/thumbnail/bar-crop files). Labels
+# travel in the JSON body / query string rather than the URL path since
+# taxonomy labels can contain characters that don't belong in a path.
+
+COVER_MAX_EDGE = 1200          # px; covers are only ever shown as small tiles
+COVER_MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+
+def is_category_private(label):
+    with category_settings_lock:
+        return bool(category_settings.get(label, {}).get("private"))
+
+
+def _hidden_from_viewer(record):
+    """True if this video belongs to a private category and the requester
+    isn't signed in."""
+    return is_category_private(display_species(record)) and current_user() is None
+
+
+def _cover_filename_for(label):
+    # Hash rather than the label itself — labels aren't safe filenames.
+    return hashlib.sha1(label.encode("utf-8")).hexdigest() + ".jpg"
+
+
+def _known_category(label):
+    if label == "blank":
+        return True
+    with species_lock:
+        return label in canonical_species
+
+
+def _category_settings_response(label):
+    with category_settings_lock:
+        cfg = dict(category_settings.get(label, {}))
+    return {
+        "label": label,
+        "private": bool(cfg.get("private")),
+        "has_cover": bool(cfg.get("cover")),
+        "cover_version": cfg.get("cover_version", 0),
+    }
+
+
+@app.route("/api/categories/private", methods=["POST"])
+@login_required
+def set_category_private():
+    data = request.get_json(force=True)
+    label = (data.get("label") or "").strip()
+    if not label or not _known_category(label):
+        return jsonify({"error": "Unknown category"}), 404
+    with category_settings_lock:
+        category_settings.setdefault(label, {})["private"] = bool(data.get("private"))
+    save_category_settings()
+    return jsonify(_category_settings_response(label))
+
+
+@app.route("/api/categories/cover", methods=["POST"])
+@login_required
+def upload_category_cover():
+    label = (request.form.get("label") or "").strip()
+    if not label or not _known_category(label):
+        return jsonify({"error": "Unknown category"}), 404
+    file = request.files.get("cover")
+    if file is None:
+        return jsonify({"error": "No image was attached"}), 400
+
+    raw = file.read(COVER_MAX_UPLOAD_BYTES + 1)
+    if len(raw) > COVER_MAX_UPLOAD_BYTES:
+        return jsonify({"error": "Image is larger than 15 MB — choose a smaller file"}), 400
+
+    # Decode and re-encode rather than storing the upload as-is: this both
+    # rejects anything that isn't really an image and strips whatever else
+    # the file might carry (EXIF GPS, etc.).
+    img = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return jsonify({"error": "That file isn't a readable image — use a JPG, PNG, or WebP"}), 400
+    h, w = img.shape[:2]
+    scale = COVER_MAX_EDGE / max(h, w)
+    if scale < 1:
+        img = cv2.resize(img, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        return jsonify({"error": "Couldn't process that image"}), 500
+
+    filename = _cover_filename_for(label)
+    with open(CATEGORY_COVERS_DIR / filename, "wb") as f:
+        f.write(encoded.tobytes())
+
+    with category_settings_lock:
+        cfg = category_settings.setdefault(label, {})
+        cfg["cover"] = filename
+        cfg["cover_version"] = cfg.get("cover_version", 0) + 1  # cache-buster for the cover URL
+    save_category_settings()
+    return jsonify(_category_settings_response(label))
+
+
+@app.route("/api/categories/cover", methods=["DELETE"])
+@login_required
+def delete_category_cover():
+    data = request.get_json(force=True)
+    label = (data.get("label") or "").strip()
+    with category_settings_lock:
+        cfg = category_settings.get(label)
+        filename = cfg.pop("cover", None) if cfg else None
+    if filename:
+        try:
+            (CATEGORY_COVERS_DIR / filename).unlink()
+        except FileNotFoundError:
+            pass
+        save_category_settings()
+    return jsonify(_category_settings_response(label))
+
+
+@app.route("/api/categories/cover")
+def serve_category_cover():
+    label = request.args.get("label") or ""
+    with category_settings_lock:
+        cfg = dict(category_settings.get(label, {}))
+    filename = cfg.get("cover")
+    if not filename:
+        abort(404)
+    if cfg.get("private") and current_user() is None:
+        abort(404)
+    if not (CATEGORY_COVERS_DIR / filename).is_file():
+        abort(404)
+    return send_from_directory(str(CATEGORY_COVERS_DIR), filename)
 
 
 def prune_unused_locations():
@@ -1802,9 +1969,15 @@ def list_videos():
     with videos_lock:
         vids = list(videos.values())
 
+    signed_in = current_user() is not None
+    with category_settings_lock:
+        private_labels = {k for k, v in category_settings.items() if v.get("private")}
+
     result = []
     for v in vids:
         disp = display_species(v)
+        if not signed_in and disp in private_labels:
+            continue
         if species_filter and disp != species_filter:
             continue
         if favorites_only and not v.get("favorited"):
@@ -1968,7 +2141,7 @@ def serve_bar_crop(video_id):
     upload time (see save_bar_crop_safe in sync_videos_from_job)."""
     with videos_lock:
         record = videos.get(video_id)
-    if not record:
+    if not record or _hidden_from_viewer(record):
         abort(404)
     crop_path = BAR_CROPS_DIR / f"{video_id}.png"
     if not crop_path.is_file():
@@ -1984,7 +2157,7 @@ def serve_thumbnail(video_id):
     for every card at once."""
     with videos_lock:
         record = videos.get(video_id)
-    if not record:
+    if not record or _hidden_from_viewer(record):
         abort(404)
     thumb_path = THUMBNAILS_DIR / f"{video_id}.jpg"
     if not thumb_path.is_file():
@@ -1996,7 +2169,7 @@ def serve_thumbnail(video_id):
 def serve_media(video_id):
     with videos_lock:
         record = videos.get(video_id)
-    if not record:
+    if not record or _hidden_from_viewer(record):
         abort(404)
     folder = Path(record["folder"])
     filename = record["filename"]

@@ -750,12 +750,6 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
      just makes every video harder to make out on a phone. */
   .video-grid { grid-template-columns: 1fr; }
 
-  /* Fewer, bigger category cards instead of auto-fill cramming in as many
-     as technically fit at their desktop size. */
-  .species-group-cards { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
-  .species-group-card { padding: 1.5rem 1rem; }
-  .species-group-label { font-size: 1.15rem; }
-  .species-group-count { font-size: 0.95rem; }
 }
 
 .review-layout.review-swipe-exit-left { transform: translateX(-50px); opacity: 0; }
@@ -891,12 +885,23 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   gap: 0.9rem;
 }
 
+/* Every tile is the same size regardless of label length or whether it has
+   a cover: nearly square, a touch taller than wide. --card-bg is the tile's
+   own fill, reused by the cover gradient so the fade always lands on the
+   same color the tile would otherwise be. */
 .species-group-card {
+  --card-bg: white;
   position: relative;
-  background: white;
+  aspect-ratio: 9 / 10;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: var(--card-bg);
   border: 1px solid #e2e5ea;
   border-radius: 10px;
-  padding: 1.1rem 1rem;
+  padding: 1rem;
   cursor: pointer;
   text-align: center;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
@@ -906,14 +911,30 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
   transform: translateY(-1px);
 }
-.species-group-card.blank { background: #fafbfc; }
-.species-group-card.has-unreviewed { background: #eff6ff; border-color: #bfdbfe; }
+.species-group-card:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.species-group-card.blank { --card-bg: #fafbfc; }
+.species-group-card.has-unreviewed { --card-bg: #eff6ff; border-color: #bfdbfe; }
+
+.species-group-text {
+  position: relative; /* above the cover */
+  z-index: 1;
+  max-width: 100%;
+  min-width: 0;
+}
 
 .species-group-label {
   font-weight: 600;
   font-size: 0.95rem;
   text-transform: capitalize;
   margin-bottom: 0.3rem;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .species-group-count {
@@ -921,10 +942,50 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   color: #8a929c;
 }
 
-.unreviewed-bubble {
+/* With a cover: photo fills the tile, the tile's color rises from the
+   bottom and fades out, and the title sits bottom-left on that fade. */
+.species-group-card.has-cover {
+  justify-content: flex-end;
+  align-items: flex-start;
+  text-align: left;
+}
+.species-group-cover {
+  position: absolute;
+  inset: 0;
+  border-radius: 9px; /* card radius minus its 1px border */
+  overflow: hidden;
+}
+.species-group-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.species-group-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    var(--card-bg) 0%,
+    var(--card-bg) 20%,
+    color-mix(in srgb, var(--card-bg) 65%, transparent) 38%,
+    transparent 62%
+  );
+}
+
+/* Corner bubbles (private, unreviewed count) sit in one row so they never
+   overlap — the review count keeps the corner, private sits to its left. */
+.card-bubbles {
   position: absolute;
   top: -0.45rem;
   right: -0.45rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.unreviewed-bubble {
   background: #2563eb;
   color: white;
   font-size: 0.7rem;
@@ -939,15 +1000,36 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   box-shadow: 0 0 0 2px white;
 }
 
-.back-btn {
-  background: none;
-  color: #2563eb;
-  border: none;
-  padding: 0.3rem 0;
-  font-size: 0.9rem;
-  margin-bottom: 0.8rem;
+.private-bubble {
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 999px;
+  background: white;
+  color: #dc2626;
+  border: 1.5px solid #dc2626;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px white;
 }
-.back-btn:hover { background: none; text-decoration: underline; }
+
+/* ---- Library detail toolbar ---- */
+.lib-detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+.lib-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.lib-toolbar-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
 
 #lib-detail-heading {
   text-transform: capitalize;
@@ -2377,4 +2459,129 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   background: #f6f7f9;
   color: #57606a;
   cursor: default;
+}
+
+/* ---- Library category settings modal ---- */
+.category-settings-box {
+  max-width: 440px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+#category-settings-title { text-transform: capitalize; }
+
+.category-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.3rem 0 1rem;
+  border-bottom: 1px solid #edf0f3;
+}
+.category-settings-text,
+.category-settings-cover {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.category-settings-cover { padding-top: 1rem; }
+.category-settings-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.category-settings-hint {
+  font-size: 0.8rem;
+  color: #57606a;
+}
+
+/* Red when on, matching the private bubble it puts on the tile. */
+.private-toggle.active { background: #dc2626; }
+.toggle-switch:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.category-cover-editor {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+/* A real tile, rendered by the same code as the Library grid — just not
+   interactive here. */
+.category-cover-preview {
+  width: 140px;
+  flex-shrink: 0;
+  cursor: default;
+}
+.category-cover-preview:hover {
+  border-color: #e2e5ea;
+  box-shadow: none;
+  transform: none;
+}
+.category-cover-preview.has-unreviewed:hover { border-color: #bfdbfe; }
+
+.category-cover-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.category-cover-upload {
+  display: inline-block;
+  margin: 0;
+  font-weight: normal; /* it's a <label>, which the base styles bold */
+  color: white;
+  border-radius: 6px;
+  padding: 0.55rem 1rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.category-cover-actions:has(input:focus-visible) .category-cover-upload {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.category-cover-remove {
+  background: none;
+  color: #b42318;
+  padding: 0.2rem 0;
+  font-size: 0.85rem;
+}
+.category-cover-remove:hover { background: none; text-decoration: underline; }
+.category-cover-status {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #57606a;
+}
+.category-cover-status.error { color: #b42318; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Phone layout for the Library tiles. Lives down here, after the base tile
+   rules, so it actually wins the cascade (it previously sat above them in
+   the main mobile block and was being overridden). */
+@media (max-width: 640px) {
+  /* Fewer, bigger category cards instead of auto-fill cramming in as many
+     as technically fit at their desktop size. */
+  .species-group-cards { grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
+  .species-group-card { padding: 0.9rem 0.8rem; }
+  .species-group-label { font-size: 1.15rem; }
+  .species-group-count { font-size: 0.95rem; }
+  .category-cover-preview { width: 120px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .species-group-card { transition: none; }
+  .species-group-card:hover { transform: none; }
 }

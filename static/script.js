@@ -1906,34 +1906,208 @@ function renderLibraryGroupCards() {
 
   sorted.forEach(s => {
     const unreviewedCount = unreviewedCountsBySpecies[s.label] || 0;
+    const card = buildGroupCard(s, unreviewedCount);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.addEventListener("click", () => openLibraryGroup(s.label));
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openLibraryGroup(s.label);
+      }
+    });
+    container.appendChild(card);
+  });
+}
 
-    const card = document.createElement("div");
-    card.className = "species-group-card"
-      + (s.label === "blank" ? " blank" : "")
-      + (unreviewedCount > 0 ? " has-unreviewed" : "");
+function categoryCoverUrl(species) {
+  return `/api/categories/cover?label=${encodeURIComponent(species.label)}&v=${species.cover_version || 0}`;
+}
+
+// Fills a .species-group-card with its cover, bubbles, and text. Shared by
+// the Library group view and the live preview in the category settings
+// modal, so the preview is always exactly what the tile will look like.
+// `into` reuses an existing element (the modal preview) instead of making
+// a new one.
+function buildGroupCard(species, unreviewedCount, into = null) {
+  const card = into || document.createElement("div");
+  card.innerHTML = "";
+  card.className = (into ? "species-group-card category-cover-preview" : "species-group-card")
+    + (species.label === "blank" ? " blank" : "")
+    + (unreviewedCount > 0 ? " has-unreviewed" : "")
+    + (species.has_cover ? " has-cover" : "");
+
+  if (species.has_cover) {
+    const cover = document.createElement("div");
+    cover.className = "species-group-cover";
+    const img = document.createElement("img");
+    img.src = categoryCoverUrl(species);
+    img.alt = "";
+    img.loading = "lazy";
+    cover.appendChild(img);
+    card.appendChild(cover);
+  }
+
+  if (species.private || unreviewedCount > 0) {
+    const bubbles = document.createElement("div");
+    bubbles.className = "card-bubbles";
+
+    if (species.private) {
+      const priv = document.createElement("span");
+      priv.className = "private-bubble";
+      priv.title = "Private — hidden from anyone who isn't signed in";
+      priv.innerHTML = EYE_OFF_SVG;
+      bubbles.appendChild(priv);
+    }
 
     if (unreviewedCount > 0) {
       const bubble = document.createElement("span");
       bubble.className = "unreviewed-bubble";
       bubble.textContent = unreviewedCount;
       bubble.title = `${unreviewedCount} unreviewed video${unreviewedCount === 1 ? "" : "s"}`;
-      card.appendChild(bubble);
+      bubbles.appendChild(bubble);
     }
+    card.appendChild(bubbles);
+  }
 
-    const label = document.createElement("div");
-    label.className = "species-group-label";
-    label.textContent = s.label;
-    card.appendChild(label);
+  const text = document.createElement("div");
+  text.className = "species-group-text";
 
-    const count = document.createElement("div");
-    count.className = "species-group-count";
-    count.textContent = `${s.count} clip${s.count === 1 ? "" : "s"}`;
-    card.appendChild(count);
+  const label = document.createElement("div");
+  label.className = "species-group-label";
+  label.textContent = species.label;
+  text.appendChild(label);
 
-    card.addEventListener("click", () => openLibraryGroup(s.label));
-    container.appendChild(card);
-  });
+  const count = document.createElement("div");
+  count.className = "species-group-count";
+  count.textContent = `${species.count} clip${species.count === 1 ? "" : "s"}`;
+  text.appendChild(count);
+
+  card.appendChild(text);
+  return card;
 }
+
+const EYE_OFF_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 10 8 10 8a13.2 13.2 0 0 1-1.67 2.68"></path>
+  <path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61"></path>
+  <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path>
+  <line x1="2" y1="2" x2="22" y2="22"></line>
+</svg>`;
+
+// ---- Library category settings modal ----
+function activeCategory() {
+  return allSpecies.find(s => s.label === libraryActiveSpecies) || null;
+}
+
+function renderCategorySettingsModal() {
+  const species = activeCategory();
+  if (!species) return;
+
+  document.getElementById("category-settings-title").textContent = `${species.label} settings`;
+
+  const toggle = document.getElementById("category-private-toggle");
+  toggle.classList.toggle("active", !!species.private);
+  toggle.setAttribute("aria-checked", species.private ? "true" : "false");
+
+  buildGroupCard(species, unreviewedCountsBySpecies[species.label] || 0, document.getElementById("category-cover-preview"));
+
+  document.getElementById("category-cover-upload-label").textContent = species.has_cover ? "Replace cover photo" : "Upload cover photo";
+  document.getElementById("category-cover-remove-btn").classList.toggle("hidden", !species.has_cover);
+}
+
+function setCategoryCoverStatus(message, isError = false) {
+  const el = document.getElementById("category-cover-status");
+  el.textContent = message || "";
+  el.classList.toggle("hidden", !message);
+  el.classList.toggle("error", isError);
+}
+
+// Merges a settings response from the server into the cached species entry.
+function applyCategorySettings(data) {
+  const species = allSpecies.find(s => s.label === data.label);
+  if (!species) return;
+  species.private = data.private;
+  species.has_cover = data.has_cover;
+  species.cover_version = data.cover_version;
+  renderCategorySettingsModal();
+}
+
+function openCategorySettings() {
+  if (!activeCategory()) return;
+  setCategoryCoverStatus("");
+  renderCategorySettingsModal();
+  document.getElementById("category-settings-modal").classList.remove("hidden");
+  document.getElementById("category-private-toggle").focus();
+}
+
+function closeCategorySettings() {
+  document.getElementById("category-settings-modal").classList.add("hidden");
+  document.getElementById("lib-settings-btn").focus();
+}
+
+document.getElementById("lib-settings-btn").addEventListener("click", openCategorySettings);
+document.getElementById("category-settings-close-btn").addEventListener("click", closeCategorySettings);
+document.getElementById("category-settings-modal").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) closeCategorySettings(); // backdrop click, not clicks inside the box
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !document.getElementById("category-settings-modal").classList.contains("hidden")) {
+    closeCategorySettings();
+  }
+});
+
+document.getElementById("category-private-toggle").addEventListener("click", async (e) => {
+  const species = activeCategory();
+  if (!species) return;
+  const toggle = e.currentTarget;
+  toggle.disabled = true;
+  const res = await fetch("/api/categories/private", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label: species.label, private: !species.private }),
+  });
+  const data = await res.json();
+  toggle.disabled = false;
+  if (data.error) { alert(data.error); return; }
+  applyCategorySettings(data);
+});
+
+document.getElementById("category-cover-input").addEventListener("change", async (e) => {
+  const input = e.currentTarget;
+  const file = input.files[0];
+  input.value = ""; // so picking the same file again still fires change
+  const species = activeCategory();
+  if (!file || !species) return;
+
+  const body = new FormData();
+  body.append("label", species.label);
+  body.append("cover", file);
+
+  setCategoryCoverStatus("Uploading…");
+  try {
+    const res = await fetch("/api/categories/cover", { method: "POST", body });
+    const data = await res.json();
+    if (data.error) { setCategoryCoverStatus(data.error, true); return; }
+    setCategoryCoverStatus("");
+    applyCategorySettings(data);
+  } catch (err) {
+    setCategoryCoverStatus("Upload failed — check your connection and try again.", true);
+  }
+});
+
+document.getElementById("category-cover-remove-btn").addEventListener("click", async () => {
+  const species = activeCategory();
+  if (!species) return;
+  const res = await fetch("/api/categories/cover", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label: species.label }),
+  });
+  const data = await res.json();
+  if (data.error) { setCategoryCoverStatus(data.error, true); return; }
+  setCategoryCoverStatus("");
+  applyCategorySettings(data);
+});
 
 // ---- Settings tab ----
 function loadSettingsTab() {
@@ -2160,6 +2334,8 @@ function openLibraryGroup(label, { pushState = true } = {}) {
   document.getElementById("lib-groups-view").classList.add("hidden");
   document.getElementById("lib-detail-view").classList.remove("hidden");
   document.getElementById("lib-detail-heading").textContent = label;
+  // Category settings are an editing action — the signed-out view is read-only.
+  document.getElementById("lib-settings-btn").classList.toggle("hidden", !isSignedIn());
   loadLibrary();
   if (pushState) {
     history.pushState({ tab: "library", species: label }, "", "#library/" + encodeURIComponent(label));
@@ -4505,6 +4681,10 @@ function applyAuthVisibility() {
     const allowed = signedIn || SIGNED_OUT_TABS.includes(btn.dataset.tab);
     btn.classList.toggle("hidden", !allowed);
   });
+
+  // Category settings are an editing action (also re-checked whenever a
+  // category is opened, in case that happens before auth state loads).
+  document.getElementById("lib-settings-btn").classList.toggle("hidden", !signedIn);
 
   // (The Library review-count badge is handled in updateLibraryTabBadge,
   // which re-runs on every data refresh.)

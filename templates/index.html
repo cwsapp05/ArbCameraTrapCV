@@ -189,7 +189,16 @@
 
     <!-- DETAIL VIEW: videos for whichever species card was clicked -->
     <div id="lib-detail-view" class="hidden">
-      <button id="lib-back-btn" class="back-btn">← Back to species</button>
+      <div class="lib-detail-toolbar">
+        <button type="button" id="lib-back-btn" class="secondary-btn lib-toolbar-btn">← Back to species</button>
+        <button type="button" id="lib-settings-btn" class="secondary-btn lib-toolbar-btn hidden" aria-haspopup="dialog">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          Settings
+        </button>
+      </div>
       <h3 id="lib-detail-heading"></h3>
       <div id="lib-grid" class="video-grid"></div>
       <div id="lib-empty" class="muted hidden">No videos match this filter yet.</div>
@@ -548,6 +557,42 @@
     <div class="ocr-wizard-nav">
       <button id="ocr-wizard-back-btn" type="button">← Back</button>
       <button id="ocr-wizard-next-btn" type="button" class="ocr-wizard-primary">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Category settings, opened from the Settings button beside "← Back to
+     species" in a drilled-into Library category. Every change saves
+     immediately, so there's no Save button — just close. -->
+<div id="category-settings-modal" class="modal-overlay hidden">
+  <div class="modal-box category-settings-box" role="dialog" aria-modal="true" aria-labelledby="category-settings-title">
+    <div class="modal-header">
+      <h3 id="category-settings-title">Category settings</h3>
+      <button type="button" id="category-settings-close-btn" class="modal-close" aria-label="Close">✕</button>
+    </div>
+
+    <div class="category-settings-row">
+      <div class="category-settings-text">
+        <span class="category-settings-label">Private</span>
+        <span class="category-settings-hint">Hidden from anyone who isn't signed in.</span>
+      </div>
+      <button type="button" id="category-private-toggle" class="toggle-switch private-toggle" role="switch" aria-checked="false" aria-label="Private category">
+        <span class="toggle-switch-knob"></span>
+      </button>
+    </div>
+
+    <div class="category-settings-cover">
+      <span class="category-settings-label">Cover photo</span>
+      <span class="category-settings-hint">Shown on this category's tile in the Library.</span>
+      <div class="category-cover-editor">
+        <div id="category-cover-preview" class="species-group-card category-cover-preview" aria-hidden="true"></div>
+        <div class="category-cover-actions">
+          <label for="category-cover-input" id="category-cover-upload-label" class="secondary-btn category-cover-upload">Upload cover photo</label>
+          <input type="file" id="category-cover-input" accept="image/jpeg,image/png,image/webp" class="visually-hidden">
+          <button type="button" id="category-cover-remove-btn" class="category-cover-remove hidden">Remove cover</button>
+          <p id="category-cover-status" class="category-cover-status hidden" role="status"></p>
+        </div>
+      </div>
     </div>
   </div>
 </div>
