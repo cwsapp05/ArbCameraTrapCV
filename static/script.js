@@ -1690,11 +1690,24 @@ function updateReviewSpeciesDisplay() {
   const display = document.getElementById("review-species-display");
   display.textContent = v.display_species;
   display.classList.toggle("confirmed", !!v.corrected_species);
+
+  // Confirm means "the model's guess is right" — it always saves
+  // ai_species. Once someone has picked a different species via
+  // "Wrong? Edit", clicking it would silently revert their edit back to the
+  // model's guess, so it's disabled for any entry whose current label is a
+  // human edit. Derived from the entry's own data (not a per-session flag),
+  // so it stays correct when coming back to this entry with Previous.
+  const confirmBtn = document.getElementById("review-confirm-species-btn");
+  const edited = !!v.corrected_species && v.corrected_species !== (v.ai_species || "blank");
+  confirmBtn.disabled = edited;
+  confirmBtn.title = edited
+    ? "Species was edited — use \"Wrong? Edit\" to change it again"
+    : "";
 }
 
-document.getElementById("review-confirm-species-btn").addEventListener("click", async () => {
+document.getElementById("review-confirm-species-btn").addEventListener("click", async (e) => {
   const v = reviewQueue[reviewIndex];
-  if (!v) return;
+  if (!v || e.currentTarget.disabled) return;
   const data = await saveCorrection(v.id, v.ai_species || "blank");
   if (data.error) {
     alert(data.error);
@@ -2385,6 +2398,18 @@ function removeLibraryCard(gridId, videoId) {
   }
 }
 
+// Fills in both forms of a card's "verified" marker — the hover info
+// bubble and the plain tag. CSS decides which one is visible (the tag is
+// only shown on phones when signed out, where hover doesn't exist).
+function setCardVerified(cardEl, correctedBy) {
+  cardEl.querySelector(".verified-info").classList.remove("hidden");
+  cardEl.querySelector(".verified-info-tooltip").textContent =
+    correctedBy ? `Verified by: ${correctedBy}` : "Verified";
+  const tag = cardEl.querySelector(".verified-tag");
+  tag.textContent = correctedBy ? `Verified by ${correctedBy}` : "Verified";
+  tag.classList.add("is-verified");
+}
+
 function patchLibraryCardSpecies(gridId, videoId, newDisplaySpecies, correctedBy) {
   const cardEl = findLibraryCardEl(gridId, videoId);
   if (!cardEl) return;
@@ -2392,9 +2417,7 @@ function patchLibraryCardSpecies(gridId, videoId, newDisplaySpecies, correctedBy
   const badge = cardEl.querySelector(".species-badge");
   badge.textContent = newDisplaySpecies;
   badge.classList.toggle("blank", newDisplaySpecies === "blank");
-  cardEl.querySelector(".verified-info").classList.remove("hidden");
-  cardEl.querySelector(".verified-info-tooltip").textContent =
-    correctedBy ? `Verified by: ${correctedBy}` : "Verified";
+  setCardVerified(cardEl, correctedBy);
 
   const select = cardEl.querySelector(".correction-select");
   if (select) select.value = newDisplaySpecies;
@@ -2570,9 +2593,7 @@ function renderGrid(videos, gridId, emptyId) {
     // existed (see correct_species in app.py) — older ones just say
     // "Verified" with no name attached.
     if (v.corrected_species) {
-      card.querySelector(".verified-info").classList.remove("hidden");
-      card.querySelector(".verified-info-tooltip").textContent =
-        v.corrected_by ? `Verified by: ${v.corrected_by}` : "Verified";
+      setCardVerified(card, v.corrected_by);
     }
     if (v.marked_for_review) {
       // Review state is an internal workflow signal — meaningless to a
@@ -4738,8 +4759,19 @@ async function refreshAuthState() {
   applyAuthVisibility();
 }
 
+// Phone-width check for the account button below — matches the
+// max-width: 640px breakpoint in style.css.
+const phoneLayoutQuery = window.matchMedia("(max-width: 640px)");
+
 document.getElementById("account-btn").addEventListener("click", (e) => {
   e.stopPropagation();
+  // On phones, signing in gets its own page instead of a cramped dropdown.
+  // The current hash rides along as ?next= so the user lands back where
+  // they were (e.g. #library/raccoon) after signing in.
+  if (!isSignedIn() && phoneLayoutQuery.matches) {
+    location.href = "/signin?next=" + encodeURIComponent(location.hash);
+    return;
+  }
   const menu = document.getElementById("account-menu");
   const nowOpen = menu.classList.contains("hidden");
   menu.classList.toggle("hidden");

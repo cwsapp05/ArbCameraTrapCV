@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Trail Cam Species Library</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_version('style.css') }}">
+</head>
+<!-- Standalone sign-in page, opened from the account button on phones (see
+     the account-btn handler in script.js). Deliberately does NOT load
+     script.js — that expects the full app's DOM. -->
+<body class="signin-body">
+
+<main class="signin-page">
+  <div class="signin-card">
+    <h1>Sign in</h1>
+    <p class="signin-app-name">UCF Arboretum Trail Cam Species Library</p>
+
+    <form id="signin-form" novalidate>
+      <label for="signin-username">Username</label>
+      <input type="text" id="signin-username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+      <label for="signin-password">Password</label>
+      <input type="password" id="signin-password" autocomplete="current-password" required>
+      <p id="signin-error" class="signin-error hidden" role="alert"></p>
+      <button type="submit" id="signin-submit" class="signin-submit">Sign in</button>
+    </form>
+
+    <p class="signin-note">Are you part of a UCF lab and wanting to add your own camera trap coverage? Accounts are set up by the UCF Arboretum Web and App Team. Contact <a href="mailto:arboretum@ucf.edu">arboretum@ucf.edu</a>.</p>
+  </div>
+</main>
+
+<script>
+(function () {
+  // ?next= is the app's hash (e.g. "#library/raccoon") from where the user
+  // tapped the account button. Only a hash is accepted, and it's always
+  // appended to "/", so this can't be used to redirect off-site.
+  const rawNext = new URLSearchParams(location.search).get("next") || "";
+  const next = rawNext.startsWith("#") ? rawNext : "";
+  const returnUrl = "/" + next;
+
+  const form = document.getElementById("signin-form");
+  const username = document.getElementById("signin-username");
+  const password = document.getElementById("signin-password");
+  const errorEl = document.getElementById("signin-error");
+  const submit = document.getElementById("signin-submit");
+
+  function showError(message) {
+    errorEl.textContent = message;
+    errorEl.classList.remove("hidden");
+  }
+
+  username.focus();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorEl.classList.add("hidden");
+
+    const user = username.value.trim();
+    if (!user || !password.value) {
+      showError("Enter your username and password.");
+      return;
+    }
+
+    submit.disabled = true;
+    submit.textContent = "Signing in…";
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: user, password: password.value }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        showError(data.error);
+        password.value = "";
+        password.focus();
+        return;
+      }
+      // replace, not assign: "back" from the app shouldn't land on a
+      // sign-in form for an account that's already signed in.
+      location.replace(returnUrl);
+    } catch (err) {
+      showError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "Sign in";
+    }
+  });
+})();
+</script>
+</body>
+</html>

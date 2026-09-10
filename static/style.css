@@ -544,6 +544,18 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   visibility: visible;
 }
 
+/* Plain-tag form of the verified marker. Hidden by default; the phone
+   signed-out rules at the end of this file swap it in for the hover bubble. */
+.verified-tag {
+  display: none;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-weight: 600;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 /* Corner overlay, matching the species-group-card bubble's look — but kept
    INSIDE the card's bounds (no negative offsets) since .video-card has
    overflow:hidden for its rounded corners, which would otherwise clip a
@@ -843,6 +855,10 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   white-space: nowrap;
 }
 .confirm-btn:hover { background: #116430; }
+/* :hover above outranks the base button:disabled grey, so restate it —
+   otherwise a disabled Confirm still turns green under the cursor. */
+.confirm-btn:disabled,
+.confirm-btn:disabled:hover { background: #a9b4c2; }
 
 .edit-species-btn {
   background: none;
@@ -2585,9 +2601,88 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   .species-group-label { font-size: 1.15rem; }
   .species-group-count { font-size: 0.95rem; }
   .category-cover-preview { width: 120px; }
+
+  /* Signed out on a phone: no hover to reveal the "i" bubble's tooltip, so
+     show who verified it as a tag beside the species instead. */
+  body.signed-out .verified-info { display: none; }
+  body.signed-out .verified-tag.is-verified { display: inline-flex; }
+  body.signed-out .tag-left { flex-wrap: wrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .species-group-card { transition: none; }
   .species-group-card:hover { transform: none; }
+}
+
+/* ---- Standalone sign-in page (templates/signin.html) ---- */
+.signin-body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.signin-page {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.signin-card {
+  margin-top: 1.5rem;
+  background: white;
+  border: 1px solid #e2e5ea;
+  border-radius: 10px;
+  padding: 1.5rem 1.25rem;
+}
+
+.signin-card h1 {
+  font-size: 1.6rem;
+  margin: 0;
+}
+.signin-app-name {
+  margin: 0.3rem 0 1.4rem;
+  font-size: 0.9rem;
+  color: #57606a;
+}
+
+/* 1rem (16px) inputs: anything smaller makes iOS Safari zoom the whole
+   page in when the field is focused. */
+.signin-card input[type="text"],
+.signin-card input[type="password"] {
+  font-size: 1rem;
+  padding: 0.7rem 0.8rem;
+}
+.signin-card label { font-size: 0.9rem; }
+
+.signin-submit {
+  width: 100%;
+  margin-top: 1.4rem;
+  padding: 0.8rem 1rem;
+  font-size: 1rem;
+}
+
+.signin-error {
+  color: #dc2626;
+  font-size: 0.85rem;
+  margin: 0.8rem 0 0;
+}
+
+.signin-note {
+  margin: 1.2rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #57606a;
+}
+.signin-note a {
+  color: #2563eb;
+  overflow-wrap: anywhere;
+}
+
+.signin-submit:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }

@@ -47,7 +47,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, abort, Response, session
+from flask import Flask, jsonify, render_template, request, send_from_directory, abort, Response, session, redirect
 from werkzeug.security import check_password_hash
 import cv2
 import numpy as np
@@ -933,6 +933,17 @@ def asset_version(filename):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/signin")
+def signin_page():
+    """Standalone sign-in page — what the account button opens on phones
+    (desktop uses the dropdown in index.html). Posts to the same
+    /api/auth/login endpoint. Already signed in means there's nothing to do
+    here, so go straight back to the app."""
+    if current_user() is not None:
+        return redirect("/")
+    return render_template("signin.html")
 
 
 # ==================== Authentication ====================
