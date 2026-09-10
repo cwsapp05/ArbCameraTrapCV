@@ -190,7 +190,7 @@
     <!-- DETAIL VIEW: videos for whichever species card was clicked -->
     <div id="lib-detail-view" class="hidden">
       <div class="lib-detail-toolbar">
-        <button type="button" id="lib-back-btn" class="secondary-btn lib-toolbar-btn">← Back to species</button>
+        <h3 id="lib-detail-heading"></h3>
         <button type="button" id="lib-settings-btn" class="secondary-btn lib-toolbar-btn hidden" aria-haspopup="dialog">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"></circle>
@@ -199,7 +199,6 @@
           Settings
         </button>
       </div>
-      <h3 id="lib-detail-heading"></h3>
       <div id="lib-grid" class="video-grid"></div>
       <div id="lib-empty" class="muted hidden">No videos match this filter yet.</div>
     </div>
@@ -564,9 +563,9 @@
   </div>
 </div>
 
-<!-- Category settings, opened from the Settings button beside "← Back to
-     species" in a drilled-into Library category. Every change saves
-     immediately, so there's no Save button — just close. -->
+<!-- Category settings, opened from the Settings button next to the title
+     in a drilled-into Library category. Every change saves immediately,
+     so there's no Save button — just close. -->
 <div id="category-settings-modal" class="modal-overlay hidden">
   <div class="modal-box category-settings-box" role="dialog" aria-modal="true" aria-labelledby="category-settings-title">
     <div class="modal-header">

@@ -1055,7 +1055,7 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 
 #lib-detail-heading {
   text-transform: capitalize;
-  margin: 0 0 0.9rem 0;
+  margin: 0;
 }
 
 /* ---- Editable details grid (Date/Time/Location/Diel/Count/File Name/Notes) ---- */

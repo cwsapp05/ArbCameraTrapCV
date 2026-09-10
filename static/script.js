@@ -2355,10 +2355,6 @@ function openLibraryGroup(label, { pushState = true } = {}) {
   }
 }
 
-document.getElementById("lib-back-btn").addEventListener("click", () => {
-  refreshSpeciesData().then(() => showLibraryGroups()); // counts may have changed while drilled in
-});
-
 // ---- Library / Favorites video grids ----
 let libraryCardOrder = null; // frozen video-ID order for the CURRENT category-viewing session; null means "sort fresh"
 
