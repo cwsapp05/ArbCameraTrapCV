@@ -1677,7 +1677,7 @@ function renderReviewCard() {
   document.getElementById("review-field-time").value = v.time || "";
   document.getElementById("review-field-location").value = v.location || "";
   document.getElementById("review-field-temperature").value = formatTemperatureForDisplay(v.temperature, temperatureDisplayUnit);
-  document.getElementById("review-field-count").value = v.count ?? 1;
+  document.getElementById("review-field-count").value = v.count ?? 0;
   document.getElementById("review-field-filename").value = stripExtension(v.display_filename || v.filename);
   document.getElementById("review-field-notes").value = v.notes || "";
 
@@ -2760,7 +2760,7 @@ function expandCardInfoPanel(videoId, gridId, cardEl, v) {
   const panelEl = panelFragment.querySelector(".card-info-panel");
   const countInput = panelEl.querySelector(".card-info-count");
   const notesInput = panelEl.querySelector(".card-info-notes");
-  countInput.value = v.count ?? 1;
+  countInput.value = v.count ?? 0;
   notesInput.value = v.notes || "";
 
   const reviewBtn = panelEl.querySelector(".card-info-review-btn");
@@ -2835,7 +2835,7 @@ function expandCardInfoPanel(videoId, gridId, cardEl, v) {
   countInput.addEventListener("change", () => {
     const num = parseInt(countInput.value, 10);
     if (!isNaN(num) && num >= 0) saveField("count", num);
-    else countInput.value = v.count ?? 1; // reject an invalid entry, restore the last known-good value
+    else countInput.value = v.count ?? 0; // reject an invalid entry, restore the last known-good value
   });
   notesInput.addEventListener("blur", () => {
     saveField("notes", notesInput.value);
@@ -3156,7 +3156,7 @@ function spreadsheetRowValues(v) {
     time: v.time || "",
     location: v.location || "",
     species: v.display_species || "",
-    count: v.count ?? 1,
+    count: v.count ?? 0,
     notes: v.notes || "",
     filename: stripExtension(v.display_filename || v.filename),
     diel_period: v.diel_period || "",
@@ -4676,6 +4676,17 @@ const SIGNED_OUT_TABS = ["library", "favorites"];
 
 function applyAuthVisibility() {
   const signedIn = isSignedIn();
+
+  // Lets CSS adapt layout to the signed-out view (e.g. stretching its two
+  // tabs across the full width on phones).
+  document.body.classList.toggle("signed-out", !signedIn);
+
+  // Signed out, favorites are presented to visitors as a curated
+  // "Featured" collection rather than someone's personal favorites.
+  document.querySelector('.tab-btn[data-tab="favorites"]').textContent = signedIn ? "Favorites" : "Featured";
+  document.getElementById("fav-empty").textContent = signedIn
+    ? "No favorited videos yet — star some from the Library tab."
+    : "No featured videos yet — check back soon!";
 
   document.querySelectorAll(".tab-btn").forEach(btn => {
     const allowed = signedIn || SIGNED_OUT_TABS.includes(btn.dataset.tab);

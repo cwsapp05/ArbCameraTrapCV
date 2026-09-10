@@ -342,7 +342,7 @@ load_ocr_configs()
 _NEW_FIELD_DEFAULTS = {
     "date": None, "time": None, "location": None, "diel_period": None,
     "temperature": None,
-    "count": 1, "notes": "", "display_filename": None, "metadata_edited": False,
+    "count": 0, "notes": "", "display_filename": None, "metadata_edited": False,
     "has_bar_crop": False, "media_type": "video", "has_thumbnail": False,
     # None here (rather than a guessed name) for anything corrected before
     # accounts existed — there's no real record of who actually did it, and
@@ -358,6 +358,27 @@ for _v in videos.values():
     # rather than a flat value, so this migration doesn't suddenly flag every
     # already-confirmed video as needing review again.
     _v.setdefault("marked_for_review", not bool(_v.get("corrected_species")))
+
+# One-time data migrations, each recorded by name in migrations.json once
+# applied so it never re-runs (and never undoes a later human edit).
+MIGRATIONS_FILE = RUNS_DIR / "migrations.json"
+_applied_migrations = set(load_json(MIGRATIONS_FILE, []))
+
+if "blank_count_zero" not in _applied_migrations:
+    # Blank clips used to get a machine-estimated count of 1. Reset those to
+    # 0 — but only entries still on the AI's own blank verdict (never
+    # species-corrected) whose count is still that 1, i.e. exactly the
+    # values the old estimator produced.
+    _migrated = 0
+    for _v in videos.values():
+        if not _v.get("ai_species") and not _v.get("corrected_species") and _v.get("count") == 1:
+            _v["count"] = 0
+            _migrated += 1
+    if _migrated:
+        save_videos_index()
+    _applied_migrations.add("blank_count_zero")
+    with open(MIGRATIONS_FILE, "w") as _f:
+        json.dump(sorted(_applied_migrations), _f, indent=2)
 
 if jobs:
     _seq_counter = max((j.get("seq", 0) for j in jobs.values()), default=0)
@@ -617,12 +638,13 @@ def _max_animals_per_frame(dets, class_cats, species):
     since MegaDetector re-detects it fresh (with no identity tracking)
     every frame it's visible in.
 
-    Returns 1 for a blank clip (species is None) or if nothing matches —
-    "at least one" is the honest floor for a video with an identified
-    species but no frame-level count to point to.
+    Returns 0 for a blank clip (species is None) or if nothing matches —
+    no frame-level detections of the species means there's nothing the
+    machine actually counted, so it doesn't claim an animal it never saw.
+    A reviewer fills in the real number.
     """
     if not species:
-        return 1
+        return 0
     frame_counts = collections.Counter()
     for d in dets:
         if "classifications" not in d:
@@ -631,7 +653,7 @@ def _max_animals_per_frame(dets, class_cats, species):
         if class_cats.get(cls_idx, cls_idx) != species:
             continue
         frame_counts[d.get("frame_number")] += 1
-    return max(frame_counts.values(), default=1)
+    return max(frame_counts.values(), default=0)
 
 
 def sync_videos_from_job(job_id):
@@ -641,7 +663,7 @@ def sync_videos_from_job(job_id):
     Date/Time/Location/Diel Period (from OCR on the video's info bar, via
     bar_ocr.py) and Count/Notes/File Name (user-editable, defaulted here —
     Count in particular defaults to the max-objects-per-frame estimate from
-    _max_animals_per_frame, not just a flat 1).
+    _max_animals_per_frame — 0 when there's nothing to count, e.g. blanks).
     Existing favorited/corrected_species/manually-edited fields on a
     re-synced video are preserved — this never overwrites human input, only
     the AI/OCR-derived fields.

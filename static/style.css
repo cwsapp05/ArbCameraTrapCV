@@ -746,6 +746,12 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 
   .tab-btn { font-size: 1.1rem; padding: 0.7rem 0.9rem; }
 
+  /* Signed out there are only two tabs (Library, Favorites) — split the
+     row evenly between them instead of leaving them bunched at the left.
+     Signed in, the full tab set is too long to stretch. */
+  body.signed-out .tabs { gap: 0; }
+  body.signed-out .tab-btn { flex: 1; text-align: center; }
+
   /* One video per row — a multi-column grid of already-small thumbnails
      just makes every video harder to make out on a phone. */
   .video-grid { grid-template-columns: 1fr; }
