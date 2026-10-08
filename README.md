@@ -48,7 +48,7 @@ camera label correctly.
 - **Favorites** — a shared, team-wide curated collection for media/outreach use.
 - **Spreadsheet** — every entry as a row (Date, Time, Location, Species, Count, Notes, File Name, Diel Period, Temperature). Click any cell to edit inline, sort on stacked criteria, search across all fields, and export to CSV.
 - **Track** — an interactive map of camera locations built on [Waymark JS](https://www.ogis.org/waymark-js/) (basemap switching, marker clustering, overlay filtering), with a chronological card list beside it. Filter by date range, species, and which locations to show; the map markers and the cards always reflect the same filters.
-- **Settings** — hidden species groups, temperature units (°F/°C), OCR presets, a global OCR on/off switch, bulk-clear review marks, and full location management.
+- **Settings** — hidden species groups, temperature units (°F/°C), OCR presets, a global OCR on/off switch, storage usage and Empty Trash, bulk-clear review marks, and full location management.
 
 ### The review-mark system
 
@@ -61,6 +61,27 @@ flag, as does the Review tab's queue.
 Within a species group, marked entries sort to the top — but the order is
 frozen while you're working in that group, so reviewing a card doesn't make
 the grid reshuffle under you. It re-sorts next time you enter.
+
+## Storage and Empty Trash
+
+Most trail cam footage is blank, and uploaded videos stay on the server
+until something deletes them, so **Settings → Storage** shows how full the
+drive holding `runs/uploads/` is and lets you clear out what's no longer
+needed.
+
+**Trash** is every entry that is blank (the AI said blank and nobody
+corrected it, or someone corrected it *to* blank), is **not** marked for
+review, is not favorited, and has no notes. **Empty trash** permanently
+deletes those entries' video files, thumbnails, and Library records, then
+removes any upload folder left empty. This can't be undone.
+
+**Auto-empty trash** does the same thing automatically after a job finishes,
+if the drive is at or past a chosen threshold (90% by default). Settings
+shows when it last ran and how much it freed.
+
+> "Not marked for review" is what counts as reviewed, so **Clear all marked
+> for review** makes every AI-blank entry trash at once — including any
+> clips where the detector missed an animal.
 
 ## OCR configuration
 
@@ -149,7 +170,8 @@ static/style.css      Styling
 runs/                 Job outputs + metadata stores (gitignored):
                         jobs_index.json, videos_index.json,
                         species_list.json, locations.json,
-                        ocr_configs.json, bar_crops/, thumbnails/,
+                        ocr_configs.json, storage_settings.json,
+                        bar_crops/, thumbnails/,
                         upload_batches_index.json, uploads/ (uploaded
                         videos — see "How folder upload works" below)
 ```
@@ -185,5 +207,5 @@ Signing in is what lets someone correct a species — see `correct_species` in `
 - **No per-user permissions.** Every signed-in account can correct any video and see everything a signed-in view shows; accounts identify *who* made a change, they don't restrict *what* an account can do. Simultaneous edits to the same record are still last-write-wins.
 - OCR accuracy depends on the bar region being drawn accurately in the wizard — leave a few pixels of margin, since a crop clipping a character's edge is the most common cause of misreads.
 - The processing queue is single-worker by design (GPU memory safety); a large batch of folders processes sequentially.
-- Deleting an entry only removes its metadata — if the same folder is reprocessed, it reappears as a fresh, unedited entry.
+- Deleting a single entry only removes its metadata — if the same folder is reprocessed, it reappears as a fresh, unedited entry. Only Empty Trash deletes the video files themselves.
 - **JSON storage scales to roughly 10,000 entries.** Every save rewrites the whole file while holding a lock, so edits slow noticeably past that (~150ms at 10k, ~800ms at 50k), and the frontend refetches the full list on several actions. Moving the metadata to SQLite is the fix when it starts to bite.

@@ -2130,6 +2130,9 @@ function loadSettingsTab() {
   renderOcrPresetsList();
   updateSettingsTempUnitButtons();
   resetClearAllMarksBtn();
+  resetEmptyTrashBtn();
+  document.getElementById("empty-trash-result").classList.add("hidden");
+  loadStorageSection();
 
   // Clear any leftover CSV-import result note (and a pending overwrite
   // confirmation) from a previous visit. Done here rather than in
@@ -2174,6 +2177,126 @@ document.getElementById("clear-all-marks-btn").addEventListener("click", async (
   btn.disabled = false;
   if (data.error) { alert(data.error); return; }
   await refreshSpeciesData(); // badge counts reflect the clear immediately
+});
+
+// ---- Settings → Storage ----
+const AUTO_EMPTY_THRESHOLDS = [70, 75, 80, 85, 90, 95];
+let storageData = null; // last /api/storage response
+
+(function populateAutoEmptyThresholds() {
+  const select = document.getElementById("auto-empty-threshold");
+  AUTO_EMPTY_THRESHOLDS.forEach(pct => {
+    const opt = document.createElement("option");
+    opt.value = pct;
+    opt.textContent = `${pct}%`;
+    select.appendChild(opt);
+  });
+})();
+
+async function loadStorageSection() {
+  const res = await fetch("/api/storage");
+  if (!res.ok) return;
+  renderStorageSection(await res.json());
+}
+
+function renderStorageSection(data) {
+  storageData = data;
+
+  const fill = document.getElementById("storage-meter-fill");
+  fill.style.width = `${Math.min(data.percent_used, 100)}%`;
+  fill.classList.toggle("danger", data.percent_used >= data.auto_empty_threshold);
+  fill.classList.toggle("warn", data.percent_used < data.auto_empty_threshold && data.percent_used >= data.auto_empty_threshold - 10);
+  document.getElementById("storage-usage-text").textContent =
+    `${formatBytes(data.free_bytes)} free of ${formatBytes(data.total_bytes)} (${data.percent_used}% used)`;
+
+  document.getElementById("storage-trash-text").textContent = data.trash_count
+    ? `${data.trash_count.toLocaleString()} ${data.trash_count === 1 ? "entry" : "entries"} · ${formatBytes(data.trash_bytes)}`
+    : "Trash is empty.";
+  const btn = document.getElementById("empty-trash-btn");
+  if (!btn.classList.contains("confirming")) btn.disabled = data.trash_count === 0;
+
+  const toggle = document.getElementById("auto-empty-toggle");
+  toggle.classList.toggle("active", data.auto_empty_enabled);
+  toggle.setAttribute("aria-checked", data.auto_empty_enabled ? "true" : "false");
+  const select = document.getElementById("auto-empty-threshold");
+  if (!AUTO_EMPTY_THRESHOLDS.includes(data.auto_empty_threshold)) {
+    // A value set outside the dropdown's presets (e.g. via the API) —
+    // show it rather than silently displaying a different one.
+    const opt = document.createElement("option");
+    opt.value = data.auto_empty_threshold;
+    opt.textContent = `${data.auto_empty_threshold}%`;
+    select.appendChild(opt);
+  }
+  select.value = data.auto_empty_threshold;
+
+  const last = data.last_auto_empty;
+  const lastText = document.getElementById("last-auto-empty-text");
+  lastText.classList.toggle("hidden", !last);
+  if (last) {
+    lastText.textContent = `Last auto-emptied ${new Date(last.at).toLocaleString()}: ` +
+      `${last.deleted_count.toLocaleString()} entries, ${formatBytes(last.freed_bytes)} freed.`;
+  }
+}
+
+let emptyTrashTimeout = null;
+
+function resetEmptyTrashBtn() {
+  clearTimeout(emptyTrashTimeout);
+  const btn = document.getElementById("empty-trash-btn");
+  btn.classList.remove("confirming");
+  btn.textContent = "Empty trash";
+  if (storageData) btn.disabled = storageData.trash_count === 0;
+}
+
+document.getElementById("empty-trash-btn").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (!btn.classList.contains("confirming")) {
+    // Same two-click confirm as "Clear all marked for review" — but this
+    // one deletes files, so the prompt spells out how many.
+    btn.classList.add("confirming");
+    btn.textContent = `Permanently delete ${storageData ? storageData.trash_count.toLocaleString() : ""} entries?`;
+    emptyTrashTimeout = setTimeout(() => resetEmptyTrashBtn(), 4000);
+    return;
+  }
+
+  resetEmptyTrashBtn();
+  btn.disabled = true;
+  btn.textContent = "Emptying…";
+  const res = await fetch("/api/storage/empty-trash", { method: "POST" });
+  const data = await res.json();
+  btn.textContent = "Empty trash";
+  if (data.error) { btn.disabled = false; alert(data.error); return; }
+
+  const r = data.result;
+  const resultText = document.getElementById("empty-trash-result");
+  resultText.textContent = `Deleted ${r.deleted_count.toLocaleString()} entries, freed ${formatBytes(r.freed_bytes)}.` +
+    (r.failed_count ? ` ${r.failed_count} couldn't be deleted (file in use?) and were kept.` : "");
+  resultText.classList.remove("hidden");
+  renderStorageSection(data);
+  await refreshSpeciesData(); // Library counts reflect the deletion immediately
+});
+
+async function setAutoEmpty(body) {
+  const res = await fetch("/api/storage/auto-empty", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  const deletedBefore = storageData ? storageData.trash_count : 0;
+  renderStorageSection(data);
+  // Switching it on while already past the threshold empties the trash
+  // right away — refresh the Library if that just happened.
+  if (data.trash_count < deletedBefore) await refreshSpeciesData();
+}
+
+document.getElementById("auto-empty-toggle").addEventListener("click", () => {
+  setAutoEmpty({ enabled: !(storageData && storageData.auto_empty_enabled) });
+});
+
+document.getElementById("auto-empty-threshold").addEventListener("change", (e) => {
+  setAutoEmpty({ threshold: Number(e.target.value) });
 });
 
 const hiddenGroupsInput = document.getElementById("hidden-groups-input");

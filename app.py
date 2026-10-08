@@ -7,8 +7,10 @@ library entry — tagged animal/species/blank by the AI, correctable by staff,
 favoritable as a shared team collection, and searchable by species. Folders
 are picked on the user's own device and chunk-uploaded into this server's
 storage (see UPLOADS_DIR / init_upload_batch) rather than referenced by a
-path on the server; once uploaded, a video is never moved or deleted and is
-served in place from there for as long as it exists in the Library.
+path on the server; once uploaded, a video is never moved and is served in
+place from there for as long as it exists in the Library. The only thing
+that deletes an uploaded video is Empty Trash (see empty_trash), which
+removes blank entries a human has already reviewed.
 
 Run with (development):
     python app.py
@@ -75,6 +77,7 @@ USERS_FILE = RUNS_DIR / "users.json"
 # "Category settings" section further down.
 CATEGORY_SETTINGS_FILE = RUNS_DIR / "category_settings.json"
 CATEGORY_COVERS_DIR = RUNS_DIR / "category_covers"
+STORAGE_SETTINGS_FILE = RUNS_DIR / "storage_settings.json"
 CATEGORY_COVERS_DIR.mkdir(exist_ok=True)
 
 # Signs the session cookie (Flask's session is just a signed, NOT encrypted,
@@ -164,6 +167,16 @@ species_lock = threading.Lock()
 # videos are in it at the moment.
 category_settings = {}
 category_settings_lock = threading.Lock()
+
+# Settings tab → Storage. auto_empty_threshold is a percent of the uploads
+# drive's capacity; last_auto_empty records the most recent automatic
+# Empty Trash so Settings can show that it happened. See empty_trash.
+storage_settings = {"auto_empty_enabled": False, "auto_empty_threshold": 90, "last_auto_empty": None}
+storage_settings_lock = threading.Lock()
+
+# Held for the whole of an Empty Trash run (manual or automatic) so two can
+# never overlap and race each other deleting the same files.
+empty_trash_lock = threading.Lock()
 
 # Named OCR crop-box presets. Each config: {"bar_box": [l,t,r,b] or None,
 # "date_box": ..., "time_box": ..., "location_box": ...} — any box can be
@@ -274,6 +287,12 @@ def save_category_settings():
             json.dump(category_settings, f, indent=2)
 
 
+def save_storage_settings():
+    with storage_settings_lock:
+        with open(STORAGE_SETTINGS_FILE, "w") as f:
+            json.dump(storage_settings, f, indent=2)
+
+
 def save_upload_batches():
     with upload_batches_lock:
         with open(UPLOAD_BATCHES_FILE, "w") as f:
@@ -335,6 +354,7 @@ locations = load_json(LOCATIONS_FILE, {})
 canonical_species = load_json(SPECIES_LIST_FILE, [])
 upload_batches = load_json(UPLOAD_BATCHES_FILE, {})
 category_settings = load_json(CATEGORY_SETTINGS_FILE, {})
+storage_settings.update(load_json(STORAGE_SETTINGS_FILE, {}))
 load_ocr_configs()
 
 # Videos created before Date/Time/Location/Count/Notes/Diel Period existed
@@ -881,6 +901,7 @@ def _execute_job(job_id):
 
     if status == "done":
         sync_videos_from_job(job_id)
+        maybe_auto_empty_trash()
     elif status == "cancelled":
         _cleanup_batch_for_job(job_id)
 
@@ -2166,6 +2187,191 @@ def clear_all_review_marks():
             v["marked_for_review"] = False
     save_videos_index()
     return jsonify({"cleared_count": cleared_count})
+
+
+# ---------------------------------------------------------------------------
+# Storage / Empty Trash. Most trail cam clips are blank, and at thousands of
+# clips a day the uploads drive fills up with footage nobody needs. "Trash"
+# is every entry a human has already dealt with and left as blank — unlike
+# delete_video, emptying it removes the media file itself (plus our
+# thumbnail/bar crop), since reclaiming disk space is the whole point.
+# ---------------------------------------------------------------------------
+
+def _is_trash(video):
+    """Blank (by the human's correction if there is one, else the AI's), no
+    longer marked for review, and nothing anyone chose to keep — a favorite
+    or a note means someone found the entry worth something."""
+    return (
+        display_species(video) == "blank"
+        and not video.get("marked_for_review")
+        and not video.get("favorited")
+        and not (video.get("notes") or "").strip()
+    )
+
+
+def _media_path_in_uploads(record):
+    """The record's media file if it lives under UPLOADS_DIR, else None.
+    Anything outside it (jobs from before folder upload existed pointed at
+    arbitrary server folders) isn't this app's copy to delete."""
+    path = (Path(record["folder"]) / record["filename"]).resolve()
+    if ".." in record["filename"] or not path.is_relative_to(UPLOADS_DIR.resolve()):
+        return None
+    return path
+
+
+def _file_size(path):
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def disk_usage_info():
+    usage = shutil.disk_usage(UPLOADS_DIR)
+    return {
+        "total_bytes": usage.total,
+        "used_bytes": usage.used,
+        "free_bytes": usage.free,
+        "percent_used": round(usage.used / usage.total * 100, 1) if usage.total else 0,
+    }
+
+
+def empty_trash():
+    """
+    Deletes every trash entry (see _is_trash): its Library record, its media
+    file under UPLOADS_DIR, and its thumbnail/bar crop. Records are removed
+    first, under the lock, so nothing can serve or edit them mid-delete; a
+    media file that can't be deleted (on Windows, e.g., one that's open in
+    someone's player right now) gets its record put back, so the Library
+    never holds an entry whose file is gone, nor loses track of one that's
+    still taking up space. Returns a summary for the UI.
+    """
+    with empty_trash_lock:
+        with videos_lock:
+            removed = {vid: v for vid, v in videos.items() if _is_trash(v)}
+            for vid in removed:
+                del videos[vid]
+        if not removed:
+            return {"deleted_count": 0, "freed_bytes": 0, "failed_count": 0}
+        save_videos_index()
+
+        freed_bytes, failed = 0, {}
+        touched_dirs = set()
+        for vid, record in removed.items():
+            media_path = _media_path_in_uploads(record)
+            if media_path is not None:
+                size = _file_size(media_path)
+                try:
+                    media_path.unlink(missing_ok=True)
+                except OSError:
+                    failed[vid] = record
+                    continue
+                freed_bytes += size
+                touched_dirs.add(media_path.parent)
+            for extra in (THUMBNAILS_DIR / f"{vid}.jpg", BAR_CROPS_DIR / f"{vid}.png"):
+                freed_bytes += _file_size(extra)
+                extra.unlink(missing_ok=True)
+
+        if failed:
+            with videos_lock:
+                for vid, record in failed.items():
+                    videos.setdefault(vid, record)
+            save_videos_index()
+
+        # A batch folder emptied of every file has nothing left to serve —
+        # drop it and its upload manifest entry too.
+        emptied_batches = []
+        for d in touched_dirs:
+            if d.parent == UPLOADS_DIR.resolve() and d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+                emptied_batches.append(d.name)
+        if emptied_batches:
+            with upload_batches_lock:
+                for batch_id in emptied_batches:
+                    upload_batches.pop(batch_id, None)
+            save_upload_batches()
+
+    return {
+        "deleted_count": len(removed) - len(failed),
+        "freed_bytes": freed_bytes,
+        "failed_count": len(failed),
+    }
+
+
+def maybe_auto_empty_trash():
+    """Empties the trash if auto-empty is on and the uploads drive is at or
+    past its threshold. Checked after every job finishes (that's when new
+    entries — and so new trash candidates — appear) and when the setting is
+    switched on."""
+    with storage_settings_lock:
+        enabled = storage_settings["auto_empty_enabled"]
+        threshold = storage_settings["auto_empty_threshold"]
+    if not enabled or disk_usage_info()["percent_used"] < threshold:
+        return None
+    result = empty_trash()
+    if result["deleted_count"]:
+        with storage_settings_lock:
+            storage_settings["last_auto_empty"] = {
+                "at": datetime.now().isoformat(timespec="seconds"), **result,
+            }
+        save_storage_settings()
+    return result
+
+
+def _storage_response():
+    with videos_lock:
+        trash = [v for v in videos.values() if _is_trash(v)]
+    trash_bytes = 0
+    for v in trash:
+        media_path = _media_path_in_uploads(v)
+        if media_path is not None:
+            trash_bytes += _file_size(media_path)
+    with storage_settings_lock:
+        settings = dict(storage_settings)
+    return {
+        **disk_usage_info(),
+        "trash_count": len(trash),
+        "trash_bytes": trash_bytes,
+        **settings,
+    }
+
+
+@app.route("/api/storage")
+@login_required
+def get_storage():
+    return jsonify(_storage_response())
+
+
+@app.route("/api/storage/empty-trash", methods=["POST"])
+@login_required
+def empty_trash_route():
+    result = empty_trash()
+    return jsonify({**_storage_response(), "result": result})
+
+
+@app.route("/api/storage/auto-empty", methods=["POST"])
+@login_required
+def set_auto_empty():
+    """Body: any of {"enabled": bool, "threshold": int percent (50–99)}."""
+    data = request.get_json(force=True)
+    updates = {}
+    if "enabled" in data:
+        updates["auto_empty_enabled"] = bool(data["enabled"])
+    if "threshold" in data:
+        try:
+            threshold = int(data["threshold"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "Threshold must be a whole number"}), 400
+        if not 50 <= threshold <= 99:
+            return jsonify({"error": "Threshold must be between 50% and 99%"}), 400
+        updates["auto_empty_threshold"] = threshold
+    with storage_settings_lock:
+        storage_settings.update(updates)
+    save_storage_settings()
+    # Act right away if the drive is already past the line, rather than
+    # waiting for the next job to finish.
+    maybe_auto_empty_trash()
+    return jsonify(_storage_response())
 
 
 @app.route("/api/videos/<video_id>/bar-crop")

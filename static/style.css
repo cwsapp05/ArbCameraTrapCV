@@ -1600,12 +1600,59 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   pointer-events: none;
 }
 
-#clear-all-marks-btn.confirming {
+#clear-all-marks-btn.confirming,
+#empty-trash-btn.confirming {
   background: #fef2f2;
   color: #b91c1c;
   border: 1.5px solid #dc2626;
 }
-#clear-all-marks-btn.confirming:hover { background: #fee2e2; }
+#clear-all-marks-btn.confirming:hover,
+#empty-trash-btn.confirming:hover { background: #fee2e2; }
+
+.storage-meter {
+  height: 0.6rem;
+  border-radius: 999px;
+  background: #e2e5ea;
+  overflow: hidden;
+  margin: 0.2rem 0 0.4rem;
+}
+.storage-meter-fill {
+  height: 100%;
+  width: 0;
+  background: #2563eb;
+  transition: width 0.3s;
+}
+.storage-meter-fill.warn { background: #d97706; }
+.storage-meter-fill.danger { background: #dc2626; }
+.storage-usage-text {
+  font-size: 0.82rem;
+  margin: 0 0 0.8rem;
+}
+.storage-trash {
+  padding-top: 0.8rem;
+  border-top: 1px solid #e2e5ea;
+}
+.storage-trash .settings-section-hint { margin: 0.2rem 0 0.5rem; }
+.storage-trash-text {
+  font-size: 0.82rem;
+  margin: 0 0 0.6rem;
+}
+.storage-trash-result {
+  font-size: 0.75rem;
+  color: #57606a;
+  margin: 0.5rem 0 0;
+}
+.storage-auto-row {
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid #e2e5ea;
+}
+select.auto-empty-threshold {
+  width: auto;
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0 0.2rem;
+}
 
 /* ---- Track tab ---- */
 .track-toolbar {

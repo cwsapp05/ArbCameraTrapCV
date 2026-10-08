@@ -347,6 +347,32 @@
     </div>
 
     <div class="settings-section">
+      <label>Storage</label>
+      <div class="storage-meter" aria-hidden="true"><div id="storage-meter-fill" class="storage-meter-fill"></div></div>
+      <p id="storage-usage-text" class="storage-usage-text">Loading…</p>
+
+      <div class="storage-trash">
+        <span class="ocr-disable-title">Trash</span>
+        <p class="settings-section-hint">Blank entries that are no longer marked for review, aren't favorited, and have no notes. Emptying the trash permanently deletes their video files from the server — this can't be undone.</p>
+        <p id="storage-trash-text" class="storage-trash-text"></p>
+        <button type="button" id="empty-trash-btn" class="secondary-btn">Empty trash</button>
+        <p id="empty-trash-result" class="storage-trash-result hidden"></p>
+      </div>
+
+      <div class="ocr-disable-row storage-auto-row">
+        <div class="ocr-disable-text">
+          <span class="ocr-disable-title">Auto-empty trash</span>
+          <span class="ocr-disable-hint">Empty the trash automatically after a job finishes if the drive is at least
+            <select id="auto-empty-threshold" class="auto-empty-threshold"></select> full</span>
+        </div>
+        <button type="button" id="auto-empty-toggle" class="toggle-switch" role="switch" aria-checked="false" aria-label="Auto-empty trash">
+          <span class="toggle-switch-knob"></span>
+        </button>
+      </div>
+      <p id="last-auto-empty-text" class="storage-trash-result hidden"></p>
+    </div>
+
+    <div class="settings-section">
       <label>Review marks</label>
       <p class="settings-section-hint">Clears the "marked for review" flag on every video at once — they'll no longer count toward the review badge or appear in the Review tab queue unless re-marked individually.</p>
       <button type="button" id="clear-all-marks-btn" class="secondary-btn">Clear all marked for review</button>
