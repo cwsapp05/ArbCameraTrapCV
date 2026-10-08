@@ -194,6 +194,19 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 
 .run-btn { display: block; margin-top: 1.1rem; width: 100%; }
 
+.upload-storage-warning {
+  margin-top: 0.8rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #7f1d1d;
+  font-size: 0.85rem;
+}
+.upload-storage-warning strong { display: block; color: #b91c1c; margin-bottom: 0.3rem; }
+.upload-storage-warning p { margin: 0 0 0.5rem; }
+.upload-storage-warning-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.7rem; }
+
 .status-box {
   margin-top: 1rem;
   background: #f6f7f9;
@@ -1518,7 +1531,102 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 
 /* ---- Settings tab ---- */
 #tab-settings {
-  max-width: 420px;
+  max-width: 980px;
+}
+
+/* Category column on the left (search + category list), the chosen
+   category's settings on the right. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.settings-search-wrap { position: relative; }
+.settings-search-icon {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #8a929c;
+  pointer-events: none;
+}
+#settings-search {
+  width: 100%;
+  padding: 0.5rem 0.6rem 0.5rem 1.9rem;
+  border: 1px solid #d0d5dc;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  background: white;
+}
+#settings-search:focus { outline: 2px solid #2563eb; outline-offset: -1px; border-color: transparent; }
+
+.settings-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.settings-category-btn,
+.settings-search-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: #444b53;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.88rem;
+}
+.settings-category-btn:hover,
+.settings-search-result:hover { background: #e9ecf0; }
+.settings-category-btn.active {
+  background: white;
+  color: #1d4ed8;
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 #2563eb, 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.settings-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.settings-search-result {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.settings-search-result.active { background: white; box-shadow: inset 3px 0 0 #2563eb; }
+.settings-search-result-title { color: #1f2328; }
+.settings-search-result-title mark { background: #fde68a; color: inherit; border-radius: 2px; }
+.settings-search-result-category { font-size: 0.72rem; color: #8a929c; }
+.settings-search-empty { font-size: 0.82rem; color: #8a929c; padding: 0.4rem 0.75rem; }
+
+.settings-pane { display: none; }
+.settings-pane.active { display: block; }
+.settings-pane-title {
+  font-size: 1.1rem;
+  margin: 0.35rem 0 0.9rem;
+}
+
+/* Briefly outlines the setting a search result jumped to. */
+.settings-search-flash {
+  animation: settings-search-flash 1.6s ease-out;
+  border-radius: 8px;
+}
+@keyframes settings-search-flash {
+  0%, 40% { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.55); }
+  100% { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0); }
 }
 
 .settings-section {
@@ -1626,13 +1734,8 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
 .storage-meter-fill.danger { background: #dc2626; }
 .storage-usage-text {
   font-size: 0.82rem;
-  margin: 0 0 0.8rem;
+  margin: 0;
 }
-.storage-trash {
-  padding-top: 0.8rem;
-  border-top: 1px solid #e2e5ea;
-}
-.storage-trash .settings-section-hint { margin: 0.2rem 0 0.5rem; }
 .storage-trash-text {
   font-size: 0.82rem;
   margin: 0 0 0.6rem;
@@ -1834,12 +1937,96 @@ select.auto-empty-threshold {
 .track-media-card:not(.diel-day):not(.diel-night):not(.diel-dawn):not(.diel-dusk) { background: #f1f3f5; color: #1f2328; }
 
 /* ---- Location management (Settings tab) ---- */
-.locations-import-row {
+/* "Add new locations": a Single / Batch switch over two panels. */
+.add-location-modes {
+  display: inline-flex;
+  background: #e9ecf0;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 0.9rem;
+}
+.add-location-mode-btn {
+  background: transparent;
+  color: #57606a;
+  padding: 0.35rem 1.1rem;
+  font-size: 0.85rem;
+  border-radius: 6px;
+}
+.add-location-mode-btn:hover { background: rgba(255, 255, 255, 0.6); color: #1f2328; }
+.add-location-mode-btn.active {
+  background: white;
+  color: #1d4ed8;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* Same column proportions as the Manage Locations rows below it. */
+.add-location-form {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr auto;
+  gap: 0.6rem;
+  align-items: end;
+}
+.add-location-field label { margin-top: 0; font-size: 0.75rem; color: #57606a; }
+.add-location-field input {
+  width: 100%;
+  font-size: 0.88rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #d0d5dc;
+  border-radius: 6px;
+  font-family: inherit;
+  background: white;
+}
+.add-location-field input.invalid { border-color: #dc2626; background: #fef2f2; }
+#add-location-submit-btn { padding: 0.5rem 1.2rem; }
+
+.add-location-status {
+  font-size: 0.82rem;
+  margin: 0.6rem 0 0;
+  color: #166534;
+}
+.add-location-status.error { color: #b91c1c; }
+.add-location-status button { margin-left: 0.5rem; padding: 0.25rem 0.7rem; font-size: 0.8rem; }
+
+.locations-csv-dropzone {
   display: flex;
   align-items: center;
-  gap: 0.9rem;
-  margin-bottom: 0.6rem;
+  justify-content: center;
   flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 1.4rem 1rem;
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  background: white;
+  font-size: 0.88rem;
+  color: #57606a;
+  transition: border-color 0.15s, background 0.15s;
+}
+.locations-csv-dropzone.dragover { border-color: #2563eb; background: #eff6ff; }
+.locations-csv-help {
+  font-size: 0.78rem;
+  color: #57606a;
+  margin: 0.5rem 0 0.8rem;
+}
+.locations-csv-help code { font-size: 0.75rem; background: #e9ecf0; padding: 0.05rem 0.3rem; border-radius: 4px; }
+
+@media (max-width: 640px) {
+  .add-location-form { grid-template-columns: 1fr 1fr; }
+  .add-location-field-name { grid-column: 1 / -1; }
+  #add-location-submit-btn { grid-column: 1 / -1; }
+
+  /* Five columns don't fit a phone: each location becomes a small card —
+     name, then lat/lon, then its buttons. */
+  .settings-section .locations-list-header { display: none; }
+  .locations-list .location-row {
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid #e2e5ea;
+    border-radius: 8px;
+    background: white;
+    padding: 0.6rem;
+  }
+  .locations-list .location-row-name { grid-column: 1 / -1; }
 }
 
 /* This is a <label> (it wraps a hidden file input), so it inherits none of
@@ -1868,7 +2055,7 @@ select.auto-empty-threshold {
   color: #2563eb;
   border: none;
   padding: 0;
-  font-size: 0.82rem;
+  font-size: inherit;
   text-decoration: underline;
 }
 .locations-csv-template-btn:hover { background: none; color: #1d4ed8; }
@@ -1951,10 +2138,6 @@ select.auto-empty-threshold {
   margin-top: 0.6rem;
 }
 
-.add-location-btn {
-  width: 100%;
-  margin-top: 0.7rem;
-}
 
 .location-row {
   padding: 0.4rem 0.3rem;
@@ -2111,18 +2294,6 @@ select.auto-empty-threshold {
 }
 .ocr-wizard-reading-blank { color: #b91c1c; font-style: normal; }
 
-.hidden-groups-input-wrap {
-  position: relative;
-}
-
-#hidden-groups-input {
-  width: 100%;
-  padding: 0.5rem 0.65rem;
-  border: 1px solid #d0d5dc;
-  border-radius: 6px;
-  font-size: 0.9rem;
-}
-
 .autofill-dropdown {
   position: absolute;
   top: calc(100% + 4px);
@@ -2144,35 +2315,6 @@ select.auto-empty-threshold {
   text-transform: capitalize;
 }
 .autofill-item:hover { background: #f6f7f9; }
-
-.hidden-groups-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.9rem;
-}
-
-.hidden-group-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: #f1f3f5;
-  color: #444b53;
-  border-radius: 999px;
-  padding: 0.3rem 0.5rem 0.3rem 0.75rem;
-  font-size: 0.8rem;
-  text-transform: capitalize;
-}
-
-.hidden-group-remove {
-  background: none;
-  border: none;
-  color: #8a929c;
-  font-size: 0.75rem;
-  padding: 0 0.2rem;
-  line-height: 1;
-}
-.hidden-group-remove:hover { background: none; color: #dc2626; }
 
 /* ---- Temperature unit toggle (Library Settings) ---- */
 .temp-unit-toggle-group {
@@ -2656,7 +2798,18 @@ select.auto-empty-threshold {
   body.signed-out .tag-left { flex-wrap: wrap; }
 }
 
+/* Settings on a phone: one column, categories become a row of tabs under
+   the search box. */
+@media (max-width: 640px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .settings-nav { position: static; }
+  .settings-category-list { flex-direction: row; overflow-x: auto; gap: 0.4rem; }
+  .settings-category-btn { width: auto; flex-shrink: 0; text-align: center; }
+  .settings-category-btn.active { box-shadow: inset 0 -2px 0 #2563eb, 0 1px 2px rgba(0, 0, 0, 0.06); }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .settings-search-flash { animation: none; outline: 3px solid rgba(37, 99, 235, 0.55); }
   .species-group-card { transition: none; }
   .species-group-card:hover { transform: none; }
 }

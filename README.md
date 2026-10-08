@@ -48,7 +48,7 @@ camera label correctly.
 - **Favorites** — a shared, team-wide curated collection for media/outreach use.
 - **Spreadsheet** — every entry as a row (Date, Time, Location, Species, Count, Notes, File Name, Diel Period, Temperature). Click any cell to edit inline, sort on stacked criteria, search across all fields, and export to CSV.
 - **Track** — an interactive map of camera locations built on [Waymark JS](https://www.ogis.org/waymark-js/) (basemap switching, marker clustering, overlay filtering), with a chronological card list beside it. Filter by date range, species, and which locations to show; the map markers and the cards always reflect the same filters.
-- **Settings** — hidden species groups, temperature units (°F/°C), OCR presets, a global OCR on/off switch, storage usage and Empty Trash, bulk-clear review marks, and full location management.
+- **Settings** — grouped into **General** (temperature units, OCR on/off and presets, bulk-clear review marks), **Storage** (drive space, Empty Trash, auto-empty), and **Locations**, with a search box that jumps to any setting by name.
 
 ### The review-mark system
 
@@ -184,10 +184,17 @@ server has no way to reach a path on someone else's machine. Clicking
 "Start Processing" chunk-uploads every video/photo directly inside that
 folder into `runs/uploads/<batch_id>/` on the server (8MB chunks, retried
 and resumable — see `/api/uploads*` in `app.py`), then submits the job
-against that server-side copy. Uploaded videos are never deleted after
-processing; they're what the Library serves from. Cancelling a queued or
+against that server-side copy. Uploaded videos stay on the server after
+processing, since they're what the Library serves from; only Empty Trash
+(see above) removes them. Cancelling a queued or
 running job deletes its batch's uploaded videos, since no Library entries
 exist for a job until it finishes successfully.
+
+Before any bytes are sent, the server checks that the folder fits: its
+total size, plus whatever other in-progress uploads still have to write,
+must leave at least 1 GB free on the drive for processing. If it doesn't
+fit, the folder's card says so (and whether emptying the trash would free
+enough) instead of starting an upload that would fail partway through.
 
 ## Accounts
 

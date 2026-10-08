@@ -309,107 +309,167 @@
 
   <!-- SETTINGS TAB -->
   <section id="tab-settings" class="tab-panel">
-    <div class="settings-section">
-      <label>Hidden groups</label>
-      <div class="hidden-groups-input-wrap">
-        <input type="text" id="hidden-groups-input" placeholder="Type a species name…" autocomplete="off">
-        <div id="hidden-groups-autofill" class="autofill-dropdown hidden"></div>
-      </div>
-
-      <div id="hidden-groups-list" class="hidden-groups-chips"></div>
-    </div>
-
-    <div class="settings-section">
-      <label>Temperature unit</label>
-      <div class="temp-unit-toggle-group">
-        <button type="button" id="settings-temp-f-btn" class="temp-unit-btn">°F</button>
-        <button type="button" id="settings-temp-c-btn" class="temp-unit-btn">°C</button>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <label>Optical Character Recognition (OCR)</label>
-
-      <div class="ocr-disable-row">
-        <div class="ocr-disable-text">
-          <span class="ocr-disable-title">Disable OCR</span>
-          <span class="ocr-disable-hint">Manually add data for Date, Time, Location, Temperature, and Diel Period in the Spreadsheet tab</span>
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="Settings categories">
+        <div class="settings-search-wrap">
+          <svg class="settings-search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <circle cx="10" cy="10" r="7"></circle><line x1="15.5" y1="15.5" x2="21" y2="21"></line>
+          </svg>
+          <input type="search" id="settings-search" placeholder="Search settings" autocomplete="off" aria-label="Search settings" aria-controls="settings-search-results">
         </div>
-        <button type="button" id="ocr-disable-toggle" class="toggle-switch" role="switch" aria-checked="false">
-          <span class="toggle-switch-knob"></span>
-        </button>
-      </div>
 
-      <div id="ocr-presets-subsection" class="ocr-presets-subsection">
-        <label class="ocr-presets-subheading">Manage OCR Presets</label>
-        <div id="ocr-presets-list" class="ocr-presets-list"></div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <label>Storage</label>
-      <div class="storage-meter" aria-hidden="true"><div id="storage-meter-fill" class="storage-meter-fill"></div></div>
-      <p id="storage-usage-text" class="storage-usage-text">Loading…</p>
-
-      <div class="storage-trash">
-        <span class="ocr-disable-title">Trash</span>
-        <p class="settings-section-hint">Blank entries that are no longer marked for review, aren't favorited, and have no notes. Emptying the trash permanently deletes their video files from the server — this can't be undone.</p>
-        <p id="storage-trash-text" class="storage-trash-text"></p>
-        <button type="button" id="empty-trash-btn" class="secondary-btn">Empty trash</button>
-        <p id="empty-trash-result" class="storage-trash-result hidden"></p>
-      </div>
-
-      <div class="ocr-disable-row storage-auto-row">
-        <div class="ocr-disable-text">
-          <span class="ocr-disable-title">Auto-empty trash</span>
-          <span class="ocr-disable-hint">Empty the trash automatically after a job finishes if the drive is at least
-            <select id="auto-empty-threshold" class="auto-empty-threshold"></select> full</span>
+        <div id="settings-category-list" class="settings-category-list">
+          <button type="button" class="settings-category-btn" data-settings-category="general">General</button>
+          <button type="button" class="settings-category-btn" data-settings-category="storage">Storage</button>
+          <button type="button" class="settings-category-btn" data-settings-category="locations">Locations</button>
         </div>
-        <button type="button" id="auto-empty-toggle" class="toggle-switch" role="switch" aria-checked="false" aria-label="Auto-empty trash">
-          <span class="toggle-switch-knob"></span>
-        </button>
-      </div>
-      <p id="last-auto-empty-text" class="storage-trash-result hidden"></p>
-    </div>
 
-    <div class="settings-section">
-      <label>Review marks</label>
-      <p class="settings-section-hint">Clears the "marked for review" flag on every video at once — they'll no longer count toward the review badge or appear in the Review tab queue unless re-marked individually.</p>
-      <button type="button" id="clear-all-marks-btn" class="secondary-btn">Clear all marked for review</button>
-    </div>
+        <div id="settings-search-results" class="settings-search-results hidden" role="listbox" aria-label="Matching settings"></div>
+      </nav>
 
-    <div class="settings-section">
-      <label>Manage Locations</label>
-      <p class="settings-section-hint">
-        Name, latitude, and longitude are all required to save a location. Renaming a
-        location here updates every matching entry in the Spreadsheet too.
-      </p>
+      <div class="settings-content">
+        <!-- GENERAL -->
+        <div class="settings-pane" data-settings-pane="general" data-pane-title="General">
+          <h2 class="settings-pane-title">General</h2>
 
-      <div class="locations-import-row">
-        <label for="locations-csv-input" class="secondary-btn locations-csv-label">Import from CSV</label>
-        <input type="file" id="locations-csv-input" accept=".csv" class="hidden">
-        <button type="button" id="locations-csv-template-btn" class="locations-csv-template-btn">Download CSV template</button>
-      </div>
-      <div id="locations-import-result" class="locations-import-result hidden"></div>
+          <div class="settings-section" data-search-title="Temperature unit" data-search-keywords="fahrenheit celsius °F °C degrees">
+            <label>Temperature unit</label>
+            <div class="temp-unit-toggle-group">
+              <button type="button" id="settings-temp-f-btn" class="temp-unit-btn">°F</button>
+              <button type="button" id="settings-temp-c-btn" class="temp-unit-btn">°C</button>
+            </div>
+          </div>
 
-      <div id="locations-import-confirm" class="locations-import-confirm hidden">
-        <p id="locations-import-confirm-intro" class="locations-import-confirm-intro"></p>
-        <div id="locations-import-confirm-list" class="locations-import-confirm-list"></div>
-        <div class="locations-import-confirm-actions">
-          <button type="button" id="locations-import-confirm-btn">Import anyway (overwrite)</button>
-          <button type="button" id="locations-import-confirm-cancel-btn" class="secondary-btn">Cancel</button>
+          <div class="settings-section" data-search-title="Optical Character Recognition (OCR)" data-search-keywords="ocr info bar text date time">
+            <label>Optical Character Recognition (OCR)</label>
+
+            <div class="ocr-disable-row" data-search-title="Disable OCR" data-search-keywords="turn off ocr manual date time temperature">
+              <div class="ocr-disable-text">
+                <span class="ocr-disable-title">Disable OCR</span>
+                <span class="ocr-disable-hint">Manually add data for Date, Time, Location, Temperature, and Diel Period in the Spreadsheet tab</span>
+              </div>
+              <button type="button" id="ocr-disable-toggle" class="toggle-switch" role="switch" aria-checked="false" aria-label="Disable OCR">
+                <span class="toggle-switch-knob"></span>
+              </button>
+            </div>
+
+            <div id="ocr-presets-subsection" class="ocr-presets-subsection" data-search-title="Manage OCR Presets" data-search-keywords="ocr presets wizard crop box">
+              <label class="ocr-presets-subheading">Manage OCR Presets</label>
+              <div id="ocr-presets-list" class="ocr-presets-list"></div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-search-title="Review marks" data-search-keywords="marked for review badge queue">
+            <label>Review marks</label>
+            <p class="settings-section-hint">Clears the "marked for review" flag on every video at once — they'll no longer count toward the review badge or appear in the Review tab queue unless re-marked individually.</p>
+            <button type="button" id="clear-all-marks-btn" class="secondary-btn" data-search-title="Clear all marked for review" data-search-keywords="unmark reset review">Clear all marked for review</button>
+          </div>
+        </div>
+
+        <!-- STORAGE -->
+        <div class="settings-pane" data-settings-pane="storage" data-pane-title="Storage">
+          <h2 class="settings-pane-title">Storage</h2>
+
+          <div class="settings-section" data-search-title="Drive space" data-search-keywords="storage disk capacity free used full">
+            <label>Drive space</label>
+            <div class="storage-meter" aria-hidden="true"><div id="storage-meter-fill" class="storage-meter-fill"></div></div>
+            <p id="storage-usage-text" class="storage-usage-text">Loading…</p>
+          </div>
+
+          <div class="settings-section" data-search-title="Trash" data-search-keywords="blank delete videos files">
+            <label>Trash</label>
+            <p class="settings-section-hint">Blank entries that are no longer marked for review, aren't favorited, and have no notes. Emptying the trash permanently deletes their video files from the server — this can't be undone.</p>
+            <p id="storage-trash-text" class="storage-trash-text"></p>
+            <button type="button" id="empty-trash-btn" class="secondary-btn" data-search-title="Empty trash" data-search-keywords="delete blank free space">Empty trash</button>
+            <p id="empty-trash-result" class="storage-trash-result hidden"></p>
+
+            <div class="ocr-disable-row storage-auto-row" data-search-title="Auto-empty trash" data-search-keywords="automatic delete threshold capacity full">
+              <div class="ocr-disable-text">
+                <span class="ocr-disable-title">Auto-empty trash</span>
+                <span class="ocr-disable-hint">Empty the trash automatically after a job finishes if the drive is at least
+                  <select id="auto-empty-threshold" class="auto-empty-threshold" aria-label="Auto-empty threshold"></select> full</span>
+              </div>
+              <button type="button" id="auto-empty-toggle" class="toggle-switch" role="switch" aria-checked="false" aria-label="Auto-empty trash">
+                <span class="toggle-switch-knob"></span>
+              </button>
+            </div>
+            <p id="last-auto-empty-text" class="storage-trash-result hidden"></p>
+          </div>
+        </div>
+
+        <!-- LOCATIONS -->
+        <div class="settings-pane" data-settings-pane="locations" data-pane-title="Locations">
+          <h2 class="settings-pane-title">Locations</h2>
+
+          <div class="settings-section" data-search-title="Add new locations" data-search-keywords="create camera site new">
+            <label>Add new locations</label>
+            <div class="add-location-modes" role="tablist" aria-label="How to add locations">
+              <button type="button" class="add-location-mode-btn" role="tab" data-add-location-mode="single" aria-controls="add-location-single">Single</button>
+              <button type="button" class="add-location-mode-btn" role="tab" data-add-location-mode="batch" aria-controls="add-location-batch">Batch</button>
+            </div>
+
+            <form id="add-location-single" class="add-location-panel" role="tabpanel" data-mode-panel="single" novalidate
+                  data-search-title="Add new location" data-search-keywords="create camera site single one latitude longitude">
+              <div class="add-location-form">
+                <div class="add-location-field add-location-field-name">
+                  <label for="add-location-name">Name</label>
+                  <input type="text" id="add-location-name" placeholder="e.g. North Trail" autocomplete="off">
+                </div>
+                <div class="add-location-field">
+                  <label for="add-location-lat">Latitude</label>
+                  <input type="number" step="any" id="add-location-lat" placeholder="28.6024">
+                </div>
+                <div class="add-location-field">
+                  <label for="add-location-lon">Longitude</label>
+                  <input type="number" step="any" id="add-location-lon" placeholder="-81.1966">
+                </div>
+                <button type="submit" id="add-location-submit-btn">Add</button>
+              </div>
+              <p id="add-location-status" class="add-location-status hidden" role="status"></p>
+            </form>
+
+            <div id="add-location-batch" class="add-location-panel hidden" role="tabpanel" data-mode-panel="batch">
+              <div id="locations-csv-dropzone" class="locations-csv-dropzone"
+                   data-search-title="Import locations from CSV" data-search-keywords="csv upload bulk import batch many">
+                <span>Drop a CSV file here or</span>
+                <label for="locations-csv-input" class="secondary-btn locations-csv-label">Choose file</label>
+                <input type="file" id="locations-csv-input" accept=".csv,text/csv" class="hidden">
+              </div>
+              <p class="locations-csv-help">
+                Columns: <code>name</code>, <code>lat</code>, <code>lon</code> ·
+                <button type="button" id="locations-csv-template-btn" class="locations-csv-template-btn" data-search-title="Download CSV template" data-search-keywords="csv example format">Download CSV template</button>
+              </p>
+              <div id="locations-import-result" class="locations-import-result hidden"></div>
+
+              <div id="locations-import-confirm" class="locations-import-confirm hidden">
+                <p id="locations-import-confirm-intro" class="locations-import-confirm-intro"></p>
+                <div id="locations-import-confirm-list" class="locations-import-confirm-list"></div>
+                <div class="locations-import-confirm-actions">
+                  <button type="button" id="locations-import-confirm-btn">Import anyway (overwrite)</button>
+                  <button type="button" id="locations-import-confirm-cancel-btn" class="secondary-btn">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-search-title="Manage Locations" data-search-keywords="camera sites latitude longitude coordinates rename edit delete">
+            <label>Manage Locations</label>
+            <p class="settings-section-hint">
+              Name, latitude, and longitude are all required to save a location. Renaming a
+              location here updates every matching entry in the Spreadsheet too.
+            </p>
+
+            <div class="locations-list-header">
+              <span>Name</span>
+              <span>Latitude</span>
+              <span>Longitude</span>
+              <span></span>
+              <span></span>
+            </div>
+            <div id="locations-list" class="locations-list"></div>
+          </div>
         </div>
       </div>
-
-      <div class="locations-list-header">
-        <span>Name</span>
-        <span>Latitude</span>
-        <span>Longitude</span>
-        <span></span>
-        <span></span>
-      </div>
-      <div id="locations-list" class="locations-list"></div>
-      <button type="button" id="add-location-btn" class="secondary-btn add-location-btn">+ Add new location</button>
     </div>
   </section>
 </div>

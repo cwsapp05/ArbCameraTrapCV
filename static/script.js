@@ -14,7 +14,9 @@ let speciesWithClips = [];  // allSpecies filtered to count > 0 — used for dro
 let modalTargetVideoId = null;
 let lastRunningJobId = null; // tracks which job the log box is currently showing
 let libraryActiveSpecies = null; // which species card was drilled into, or null = showing the group view
-let hiddenGroups = JSON.parse(localStorage.getItem("hiddenGroups") || "[]"); // species labels hidden from the group view, persisted like the temperature unit setting
+// Settings used to have a per-browser "Hidden groups" filter; it was
+// removed, so drop any leftover value rather than leave it lying around.
+try { localStorage.removeItem("hiddenGroups"); } catch (e) {}
 
 // ---- Random title emoji, picked fresh each page load ----
 const TITLE_EMOJIS = ["🦝", "🦌", "🐇", "🐻", "🐰", "🐭", "🐸", "🦆", "🪿", "🐦‍⬛", "🦉", "🦇", "🐞", "🐍", "🦎", "🐊", "🐆", "🦃", "🐁", "🐀", "🐿️"];
@@ -281,9 +283,75 @@ function createPendingUploadCard(files, folderName) {
   });
 
   startBatchUpload(card, files, folderName).catch(err => {
+    if (err.storage) {
+      showStorageBlocked(card, err.storage);
+      return;
+    }
     showUploadProgress(card);
     card.querySelector(".upload-progress-label").textContent = "Error: " + err.message;
   });
+}
+
+// The server answers 507 (code "insufficient_storage") when the uploads
+// drive can't take a folder — up front from /api/uploads, before any bytes
+// are sent, or from a chunk if the disk fills mid-upload anyway.
+function storageError(data) {
+  const err = new Error(data.error);
+  err.storage = data;
+  return err;
+}
+
+// Replaces a card's upload controls with an explanation of why it can't
+// upload, and a way out: Empty Trash if that would free enough, and a
+// button to remove the card.
+function showStorageBlocked(card, info) {
+  card.classList.add("upload-blocked");
+  hideUploadProgress(card);
+  card.querySelectorAll(".upload-location-field-wrap, .upload-ocr-field-wrap, .run-btn")
+    .forEach(el => el.classList.add("hidden"));
+
+  const box = document.createElement("div");
+  box.className = "upload-storage-warning";
+  box.setAttribute("role", "alert");
+
+  const title = document.createElement("strong");
+  title.textContent = info.needed_bytes !== undefined ? "Not enough storage space" : "Upload stopped: server disk is full";
+  const msg = document.createElement("p");
+  msg.textContent = info.error;
+  box.append(title, msg);
+
+  if (info.needed_bytes !== undefined && info.trash_bytes > 0) {
+    const shortBy = info.needed_bytes - info.available_bytes;
+    const hint = document.createElement("p");
+    hint.textContent = info.trash_bytes >= shortBy
+      ? `Emptying the trash would free ${formatBytes(info.trash_bytes)} — enough for this folder.`
+      : `Emptying the trash would free ${formatBytes(info.trash_bytes)}, which isn't quite enough on its own.`;
+    box.appendChild(hint);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "upload-storage-warning-actions";
+  if (info.trash_bytes > 0) {
+    const storageBtn = document.createElement("button");
+    storageBtn.type = "button";
+    storageBtn.textContent = "Open Storage settings";
+    storageBtn.addEventListener("click", () => {
+      activeSettingsCategory = "storage"; // loadSettingsTab opens this category
+      activateTab("settings");
+    });
+    actions.appendChild(storageBtn);
+  }
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "secondary-btn";
+  removeBtn.textContent = "Remove";
+  // cancelUpload deletes whatever reached the server (a mid-upload stop)
+  // or, when nothing did, just removes the card.
+  removeBtn.addEventListener("click", () => cancelUpload(card));
+  actions.appendChild(removeBtn);
+  box.appendChild(actions);
+
+  card.querySelector(".pending-upload-folder").after(box);
 }
 
 // Locks (or unlocks) a card's Location/OCR fields for a scheduled start,
@@ -433,6 +501,7 @@ async function startBatchUpload(card, files, folderName) {
     }),
   });
   const initData = await initRes.json();
+  if (initData.code === "insufficient_storage") throw storageError(initData);
   if (initData.error) throw new Error(initData.error);
   try { localStorage.setItem(resumeKey, initData.batch_id); } catch (e) {}
 
@@ -488,10 +557,12 @@ async function startBatchUpload(card, files, folderName) {
             method: "POST", body: form, signal: controller.signal,
           });
           const data = await res.json().catch(() => ({}));
+          if (data.code === "insufficient_storage") throw storageError(data);
           if (!res.ok || data.error) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
           break;
         } catch (e) {
           if (upload.aborted) throw new Error("Upload cancelled");
+          if (e.storage) throw e; // a full disk won't be fixed by retrying
           if (attempt >= UPLOAD_MAX_RETRIES) throw new Error(`Failed to upload ${file.relPath}: ${e.message}`);
           await new Promise(r => setTimeout(r, Math.min(1000 * 2 ** attempt, 15000)));
         }
@@ -1619,7 +1690,7 @@ let reviewIndex = 0;
 async function loadReviewQueue() {
   const res = await fetch("/api/videos");
   const vids = await res.json();
-  reviewQueue = vids.filter(v => v.marked_for_review && !hiddenGroups.includes(v.display_species));
+  reviewQueue = vids.filter(v => v.marked_for_review);
   reviewIndex = 0;
   renderReviewCard();
 }
@@ -1824,7 +1895,7 @@ async function refreshSpeciesData() {
   unreviewedCountsBySpecies = {};
   totalUnreviewedCount = 0;
   vids.forEach(v => {
-    if (v.marked_for_review && !hiddenGroups.includes(v.display_species)) {
+    if (v.marked_for_review) {
       unreviewedCountsBySpecies[v.display_species] = (unreviewedCountsBySpecies[v.display_species] || 0) + 1;
       totalUnreviewedCount++;
     }
@@ -1899,18 +1970,14 @@ function renderLibraryGroupCards() {
   const empty = document.getElementById("lib-groups-empty");
   container.innerHTML = "";
 
-  const visibleSpecies = speciesWithClips.filter(s => !hiddenGroups.includes(s.label));
-
-  if (visibleSpecies.length === 0) {
+  if (speciesWithClips.length === 0) {
     empty.classList.remove("hidden");
-    empty.textContent = speciesWithClips.length > 0
-      ? "All groups are hidden — check the Settings tab to unhide some."
-      : "No videos processed yet.";
+    empty.textContent = "No videos processed yet.";
     return;
   }
   empty.classList.add("hidden");
 
-  const sorted = [...visibleSpecies].sort((a, b) => {
+  const sorted = [...speciesWithClips].sort((a, b) => {
     if (a.label === "blank") return 1;   // blank always last, regardless of count
     if (b.label === "blank") return -1;
     if (b.count !== a.count) return b.count - a.count; // most videos first
@@ -2123,10 +2190,155 @@ document.getElementById("category-cover-remove-btn").addEventListener("click", a
 });
 
 // ---- Settings tab ----
+let activeSettingsCategory = "general"; // kept across visits to the tab within a page load
+
+function showSettingsCategory(category) {
+  activeSettingsCategory = category;
+  document.querySelectorAll(".settings-category-btn").forEach(btn => {
+    const active = btn.dataset.settingsCategory === category;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-current", active ? "page" : "false");
+  });
+  document.querySelectorAll(".settings-pane").forEach(pane => {
+    pane.classList.toggle("active", pane.dataset.settingsPane === category);
+  });
+}
+
+document.querySelectorAll(".settings-category-btn").forEach(btn => {
+  btn.addEventListener("click", () => showSettingsCategory(btn.dataset.settingsCategory));
+});
+
+// Search index, built from the markup itself: anything in a pane with a
+// data-search-title is findable, with data-search-keywords as extra terms
+// that match but aren't shown. New settings join the search just by
+// carrying those attributes.
+const settingsSearchIndex = [...document.querySelectorAll(".settings-pane [data-search-title]")].map(el => {
+  const pane = el.closest(".settings-pane");
+  return {
+    el,
+    title: el.dataset.searchTitle,
+    category: pane.dataset.settingsPane,
+    categoryTitle: pane.dataset.paneTitle,
+    haystack: `${el.dataset.searchTitle} ${el.dataset.searchKeywords || ""} ${pane.dataset.paneTitle}`.toLowerCase(),
+  };
+});
+
+const settingsSearchInput = document.getElementById("settings-search");
+let settingsSearchMatches = [];
+let settingsSearchActiveIndex = 0;
+
+function findSettings(query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const q = words.join(" ");
+  return settingsSearchIndex
+    .filter(entry => words.every(w => entry.haystack.includes(w)))
+    .map(entry => {
+      const title = entry.title.toLowerCase();
+      // Title hits outrank keyword-only hits; a title that starts with the
+      // query outranks one that merely contains it.
+      const rank = title.startsWith(q) ? 0 : title.includes(q) ? 1 : 2;
+      return { entry, rank };
+    })
+    .sort((a, b) => a.rank - b.rank)
+    .map(m => m.entry);
+}
+
+// Title with the matched query wrapped in <mark>, built as DOM nodes so
+// nothing here is ever parsed as HTML.
+function highlightedTitle(title, query) {
+  const span = document.createElement("span");
+  span.className = "settings-search-result-title";
+  const q = query.trim().toLowerCase();
+  const i = q ? title.toLowerCase().indexOf(q) : -1;
+  if (i === -1) {
+    span.textContent = title;
+    return span;
+  }
+  const mark = document.createElement("mark");
+  mark.textContent = title.slice(i, i + q.length);
+  span.append(title.slice(0, i), mark, title.slice(i + q.length));
+  return span;
+}
+
+function renderSettingsSearch() {
+  const query = settingsSearchInput.value;
+  const searching = query.trim() !== "";
+  const results = document.getElementById("settings-search-results");
+  document.getElementById("settings-category-list").classList.toggle("hidden", searching);
+  results.classList.toggle("hidden", !searching);
+  results.innerHTML = "";
+  if (!searching) return;
+
+  settingsSearchMatches = findSettings(query);
+  settingsSearchActiveIndex = 0;
+  if (settingsSearchMatches.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-search-empty";
+    empty.textContent = "No matching settings.";
+    results.appendChild(empty);
+    return;
+  }
+  settingsSearchMatches.forEach((entry, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "settings-search-result";
+    btn.setAttribute("role", "option");
+    btn.classList.toggle("active", i === 0);
+    const category = document.createElement("span");
+    category.className = "settings-search-result-category";
+    category.textContent = entry.categoryTitle;
+    btn.append(highlightedTitle(entry.title, query), category);
+    btn.addEventListener("click", () => goToSetting(entry));
+    results.appendChild(btn);
+  });
+}
+
+function setSettingsSearchActive(index) {
+  const buttons = document.querySelectorAll(".settings-search-result");
+  if (!buttons.length) return;
+  settingsSearchActiveIndex = (index + buttons.length) % buttons.length;
+  buttons.forEach((b, i) => b.classList.toggle("active", i === settingsSearchActiveIndex));
+  buttons[settingsSearchActiveIndex].scrollIntoView({ block: "nearest" });
+}
+
+function clearSettingsSearch() {
+  settingsSearchInput.value = "";
+  renderSettingsSearch();
+}
+
+// Jumps to a search result: opens its category, scrolls it into view, and
+// briefly outlines it so it's obvious which setting matched.
+function goToSetting(entry) {
+  clearSettingsSearch();
+  showSettingsCategory(entry.category);
+  const modePanel = entry.el.closest("[data-mode-panel]");
+  if (modePanel) showAddLocationMode(modePanel.dataset.modePanel);
+  entry.el.scrollIntoView({ behavior: "smooth", block: "center" });
+  entry.el.classList.remove("settings-search-flash");
+  void entry.el.offsetWidth; // restart the animation if it's the same element twice in a row
+  entry.el.classList.add("settings-search-flash");
+}
+
+settingsSearchInput.addEventListener("input", renderSettingsSearch);
+settingsSearchInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); setSettingsSearchActive(settingsSearchActiveIndex + 1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); setSettingsSearchActive(settingsSearchActiveIndex - 1); }
+  else if (e.key === "Enter") {
+    e.preventDefault();
+    const entry = settingsSearchMatches[settingsSearchActiveIndex];
+    if (settingsSearchInput.value.trim() && entry) goToSetting(entry);
+  } else if (e.key === "Escape" && settingsSearchInput.value) {
+    e.preventDefault();
+    clearSettingsSearch();
+  }
+});
+document.addEventListener("animationend", (e) => {
+  if (e.animationName === "settings-search-flash") e.target.classList.remove("settings-search-flash");
+});
+
 function loadSettingsTab() {
-  document.getElementById("hidden-groups-input").value = "";
-  document.getElementById("hidden-groups-autofill").classList.add("hidden");
-  renderHiddenGroupsList();
+  clearSettingsSearch();
+  showSettingsCategory(activeSettingsCategory);
   renderOcrPresetsList();
   updateSettingsTempUnitButtons();
   resetClearAllMarksBtn();
@@ -2146,6 +2358,8 @@ function loadSettingsTab() {
   document.getElementById("locations-import-confirm").classList.add("hidden");
   pendingImportRows = null;
   pendingImportSkipped = [];
+  setAddLocationStatus("");
+  showAddLocationMode(addLocationMode);
 
   loadLocationsSection();
 }
@@ -2193,6 +2407,10 @@ let storageData = null; // last /api/storage response
   });
 })();
 
+function pluralEntries(n) {
+  return `${n.toLocaleString()} ${n === 1 ? "entry" : "entries"}`;
+}
+
 async function loadStorageSection() {
   const res = await fetch("/api/storage");
   if (!res.ok) return;
@@ -2210,7 +2428,7 @@ function renderStorageSection(data) {
     `${formatBytes(data.free_bytes)} free of ${formatBytes(data.total_bytes)} (${data.percent_used}% used)`;
 
   document.getElementById("storage-trash-text").textContent = data.trash_count
-    ? `${data.trash_count.toLocaleString()} ${data.trash_count === 1 ? "entry" : "entries"} · ${formatBytes(data.trash_bytes)}`
+    ? `${pluralEntries(data.trash_count)} · ${formatBytes(data.trash_bytes)}`
     : "Trash is empty.";
   const btn = document.getElementById("empty-trash-btn");
   if (!btn.classList.contains("confirming")) btn.disabled = data.trash_count === 0;
@@ -2234,7 +2452,7 @@ function renderStorageSection(data) {
   lastText.classList.toggle("hidden", !last);
   if (last) {
     lastText.textContent = `Last auto-emptied ${new Date(last.at).toLocaleString()}: ` +
-      `${last.deleted_count.toLocaleString()} entries, ${formatBytes(last.freed_bytes)} freed.`;
+      `${pluralEntries(last.deleted_count)}, ${formatBytes(last.freed_bytes)} freed.`;
   }
 }
 
@@ -2254,7 +2472,7 @@ document.getElementById("empty-trash-btn").addEventListener("click", async (e) =
     // Same two-click confirm as "Clear all marked for review" — but this
     // one deletes files, so the prompt spells out how many.
     btn.classList.add("confirming");
-    btn.textContent = `Permanently delete ${storageData ? storageData.trash_count.toLocaleString() : ""} entries?`;
+    btn.textContent = storageData ? `Permanently delete ${pluralEntries(storageData.trash_count)}?` : "Click again to confirm";
     emptyTrashTimeout = setTimeout(() => resetEmptyTrashBtn(), 4000);
     return;
   }
@@ -2269,7 +2487,7 @@ document.getElementById("empty-trash-btn").addEventListener("click", async (e) =
 
   const r = data.result;
   const resultText = document.getElementById("empty-trash-result");
-  resultText.textContent = `Deleted ${r.deleted_count.toLocaleString()} entries, freed ${formatBytes(r.freed_bytes)}.` +
+  resultText.textContent = `Deleted ${pluralEntries(r.deleted_count)}, freed ${formatBytes(r.freed_bytes)}.` +
     (r.failed_count ? ` ${r.failed_count} couldn't be deleted (file in use?) and were kept.` : "");
   resultText.classList.remove("hidden");
   renderStorageSection(data);
@@ -2298,105 +2516,6 @@ document.getElementById("auto-empty-toggle").addEventListener("click", () => {
 document.getElementById("auto-empty-threshold").addEventListener("change", (e) => {
   setAutoEmpty({ threshold: Number(e.target.value) });
 });
-
-const hiddenGroupsInput = document.getElementById("hidden-groups-input");
-
-hiddenGroupsInput.addEventListener("input", () => {
-  renderHiddenGroupsAutofill(hiddenGroupsInput.value);
-});
-
-hiddenGroupsInput.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter") return;
-  e.preventDefault();
-  const typed = hiddenGroupsInput.value.trim();
-  if (!typed) return;
-  // Only adds on an actual match — this is a validated "hide this known
-  // group" action, not a free-text tag creator.
-  const match = speciesWithClips.find(s => s.label.toLowerCase() === typed.toLowerCase());
-  if (match) addHiddenGroup(match.label);
-});
-
-function renderHiddenGroupsAutofill(query) {
-  const dropdown = document.getElementById("hidden-groups-autofill");
-  const q = query.trim().toLowerCase();
-  dropdown.innerHTML = "";
-
-  if (!q) {
-    dropdown.classList.add("hidden");
-    return;
-  }
-
-  const matches = speciesWithClips
-    .filter(s => s.label.toLowerCase().includes(q) && !hiddenGroups.includes(s.label))
-    .slice(0, 8);
-
-  if (matches.length === 0) {
-    dropdown.classList.add("hidden");
-    return;
-  }
-
-  matches.forEach(s => {
-    const item = document.createElement("div");
-    item.className = "autofill-item";
-    item.textContent = s.label;
-    // mousedown (not click) fires before the input's blur, so the click
-    // registers before anything closes the dropdown out from under it.
-    item.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      addHiddenGroup(s.label);
-    });
-    dropdown.appendChild(item);
-  });
-  dropdown.classList.remove("hidden");
-}
-
-function addHiddenGroup(label) {
-  if (!hiddenGroups.includes(label)) {
-    hiddenGroups.push(label);
-    localStorage.setItem("hiddenGroups", JSON.stringify(hiddenGroups));
-  }
-  hiddenGroupsInput.value = "";
-  document.getElementById("hidden-groups-autofill").classList.add("hidden");
-  renderHiddenGroupsList();
-  // refreshSpeciesData recomputes the unreviewed-count badge excluding the
-  // newly-hidden group, then renders the group cards with it applied.
-  refreshSpeciesData().then(renderLibraryGroupCards);
-}
-
-function removeHiddenGroup(label) {
-  hiddenGroups = hiddenGroups.filter(g => g !== label);
-  localStorage.setItem("hiddenGroups", JSON.stringify(hiddenGroups));
-  renderHiddenGroupsList();
-  refreshSpeciesData().then(renderLibraryGroupCards);
-}
-
-function renderHiddenGroupsList() {
-  const container = document.getElementById("hidden-groups-list");
-  container.innerHTML = "";
-
-  if (hiddenGroups.length === 0) {
-    const emptyMsg = document.createElement("div");
-    emptyMsg.className = "muted";
-    emptyMsg.textContent = "No hidden groups.";
-    container.appendChild(emptyMsg);
-    return;
-  }
-
-  hiddenGroups.forEach(label => {
-    const chip = document.createElement("span");
-    chip.className = "hidden-group-chip";
-    chip.textContent = label;
-
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "hidden-group-remove";
-    removeBtn.textContent = "✕";
-    removeBtn.title = `Unhide ${label}`;
-    removeBtn.addEventListener("click", () => removeHiddenGroup(label));
-    chip.appendChild(removeBtn);
-
-    container.appendChild(chip);
-  });
-}
 
 // ---- OCR presets management (Library Settings) ----
 async function renderOcrPresetsList() {
@@ -3159,15 +3278,16 @@ function renderModalList(query) {
 // Deep link on first load (a reload, or a shared/bookmarked #tab URL) —
 // replaceState rather than push, so this doesn't create an extra history
 // entry the very first "back" press would just bounce straight through.
-// Deliberately down here rather than right after activateTab is defined:
-// it calls into per-tab loaders (loadSettingsTab, loadTrackTab, ...) that
-// assume the rest of the script's setup (their own DOM listeners, caches,
-// etc.) has already run.
+// The activation is deferred with setTimeout rather than run inline: the
+// per-tab loaders (loadSettingsTab, loadTrackTab, ...) read state declared
+// with let/const further down this file (e.g. temperatureDisplayUnit,
+// pendingImportRows), and calling them before those lines have run throws
+// a ReferenceError that left a reloaded #settings page half-rendered.
 {
   const initialTab = tabFromHash();
   history.replaceState({ tab: initialTab || "upload" }, "", initialTab ? location.hash : "#upload");
   if (initialTab && initialTab !== "upload") {
-    activateTab(initialTab, { pushState: false });
+    setTimeout(() => activateTab(initialTab, { pushState: false }), 0);
   }
 }
 
@@ -3323,7 +3443,7 @@ async function loadSpreadsheet() {
 }
 
 function applySpreadsheetView() {
-  let rows = spreadsheetVideos.filter(v => !hiddenGroups.includes(v.display_species));
+  let rows = spreadsheetVideos.slice();
 
   const query = spreadsheetSearch.trim().toLowerCase();
   if (query) {
@@ -4134,6 +4254,26 @@ function clearTrackMarkers() {
   trackViewer.clear_json();
 }
 
+// [lat, lon] points the map frames — set on every render, used by
+// fitTrackMapView. Kept separate from the render so Waymark's own view
+// reset (see below) frames exactly the same thing.
+let trackMapFitPoints = [];
+
+function fitTrackMapView() {
+  if (!trackViewer) return;
+  const map = trackViewer.map;
+  map.invalidateSize();
+  if (trackMapFitPoints.length === 0) {
+    // Nothing to fit bounds to — a reasonable generic world view rather
+    // than an undefined viewport.
+    map.setView([20, 0], 2);
+  } else if (trackMapFitPoints.length === 1) {
+    map.setView(trackMapFitPoints[0], 15); // a max-zoom fit on one point is useless
+  } else {
+    map.fitBounds(trackMapFitPoints, { padding: [30, 30] });
+  }
+}
+
 function renderTrackMap(allLocations, { fitView = true } = {}) {
   // Respect the Track tab's location filter so the map and the side cards
   // always agree on what's being shown.
@@ -4203,6 +4343,13 @@ function renderTrackMap(allLocations, { fitView = true } = {}) {
           },
           {
             marker_title: "No Entries",
+            // Starts unticked in the overlay filter — locations with nothing
+            // to show are clutter until someone asks for them. Waymark only
+            // reads this when it first creates the type's layer group, and
+            // that group is reused across re-renders (clearTrackMarkers
+            // empties it, never removes it), so ticking the box sticks
+            // through later filter changes.
+            marker_display: "0",
             marker_shape: "marker",
             marker_size: "medium",
             icon_type: "icon",
@@ -4213,12 +4360,17 @@ function renderTrackMap(allLocations, { fitView = true } = {}) {
         ],
       },
     });
+    // Waymark's init() polls until the map container is visible and then
+    // calls reset_map_view(), which fits to EVERY loaded feature — hidden
+    // "No Entries" markers included — and lands after our own first fit,
+    // overriding it. Route it through our framing instead.
+    trackViewer.reset_map_view = fitTrackMapView;
   }
 
   // Count from the SAME filtered set that produced the side cards, not from
   // every video — so each marker's Type and popup count always agree with
-  // what's actually listed. Reflects date range, species, selected
-  // locations, and species hidden in Settings.
+  // what's actually listed. Reflects the date range, species, and
+  // selected locations.
   const counts = {};
   (trackFilteredVideos || []).forEach(v => {
     if (v.location) counts[v.location] = (counts[v.location] || 0) + 1;
@@ -4227,14 +4379,16 @@ function renderTrackMap(allLocations, { fitView = true } = {}) {
   clearTrackMarkers();
   trackMapMarkersByName = {};
 
-  if (entries.length === 0) {
-    // Nothing to fit bounds to — a reasonable generic world view rather
-    // than an undefined viewport.
-    if (fitView) trackViewer.map.setView([20, 0], 2);
-  } else {
-    // Second arg false: load_json otherwise calls reset_map_view() itself,
-    // which runs its own fitBounds — we do our own below (single-location
-    // needs setView at a sane zoom, not a max-zoom fit on one point).
+  // Frame the locations that actually have entries, since "No Entries"
+  // markers start hidden (see marker_display above) — fitting to them too
+  // would zoom out to show empty map. Falls back to every location when
+  // none have entries.
+  const withEntries = entries.filter(([name]) => counts[name]);
+  trackMapFitPoints = (withEntries.length ? withEntries : entries).map(([, c]) => [c.lat, c.lon]);
+
+  if (entries.length > 0) {
+    // Second arg false: load_json otherwise calls reset_map_view() itself —
+    // the fit is done below, only when this render asked for one.
     trackViewer.load_json({
       type: "FeatureCollection",
       features: entries.map(([name, coords]) => ({
@@ -4257,16 +4411,9 @@ function renderTrackMap(allLocations, { fitView = true } = {}) {
       const title = layer.feature && layer.feature.properties && layer.feature.properties.title;
       if (title) trackMapMarkersByName[title] = layer;
     });
-
-    if (fitView) {
-      const bounds = entries.map(([, c]) => [c.lat, c.lon]);
-      if (bounds.length === 1) {
-        trackViewer.map.setView(bounds[0], 15);
-      } else {
-        trackViewer.map.fitBounds(bounds, { padding: [30, 30] });
-      }
-    }
   }
+
+  if (fitView) fitTrackMapView();
 
   // Leaflet sizes itself off the container's CURRENT visible dimensions —
   // if the tab was hidden when the map was first created, this fixes any
@@ -4407,7 +4554,7 @@ function populateTrackSpeciesFilter(allVideos) {
   const select = document.getElementById("track-filter-species");
   const currentValue = select.value;
   const speciesSet = new Set(
-    allVideos.map(v => v.display_species).filter(s => s && !hiddenGroups.includes(s))
+    allVideos.map(v => v.display_species).filter(Boolean)
   );
   select.innerHTML = '<option value="">All animals</option>';
   [...speciesSet].sort().forEach(s => {
@@ -4426,7 +4573,7 @@ function applyTrackMediaFilters({ fitView = false } = {}) {
   // highlight otherwise, and chronological order sets this up naturally
   // for the planned species/timeframe path-following feature later.
   let relevant = allVideos.filter(v =>
-    v.location && knownLocations[v.location] && !hiddenGroups.includes(v.display_species)
+    v.location && knownLocations[v.location]
     && isTrackLocationVisible(v.location)
   );
 
@@ -4591,21 +4738,99 @@ async function deleteLocationRow(name) {
   loadUploadLocationOptions(); // the Upload tab's dropdown is now stale
 }
 
-document.getElementById("add-location-btn").addEventListener("click", () => {
-  const listEl = document.getElementById("locations-list");
-  const template = document.getElementById("location-row-template");
-  const rowFragment = template.content.cloneNode(true);
-  const rowEl = rowFragment.querySelector(".location-row");
-  rowEl.dataset.originalName = ""; // brand new — nothing to reassign videos FROM, see saveLocationRow
-  rowEl.classList.add("needs-coords");
-  rowEl.querySelector(".location-row-name").placeholder = "New location name";
-  rowEl.querySelector(".location-row-save-btn").addEventListener("click", () => saveLocationRow(rowEl));
-  // Nothing is saved yet for a brand-new row, so this just discards it —
-  // no server call and no confirmation needed.
-  rowEl.querySelector(".location-row-delete-btn").addEventListener("click", () => rowEl.remove());
+// ---- Add new locations: Single / Batch ----
+let addLocationMode = "single"; // kept across visits to the tab within a page load
 
-  listEl.appendChild(rowFragment);
-  listEl.lastElementChild.querySelector(".location-row-name").focus();
+function showAddLocationMode(mode) {
+  addLocationMode = mode;
+  document.querySelectorAll(".add-location-mode-btn").forEach(btn => {
+    const active = btn.dataset.addLocationMode === mode;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".add-location-panel").forEach(panel => {
+    panel.classList.toggle("hidden", panel.dataset.modePanel !== mode);
+  });
+}
+
+document.querySelectorAll(".add-location-mode-btn").forEach(btn => {
+  btn.addEventListener("click", () => showAddLocationMode(btn.dataset.addLocationMode));
+});
+
+function setAddLocationStatus(message, isError = false) {
+  const status = document.getElementById("add-location-status");
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+  status.classList.toggle("hidden", !message);
+}
+
+// Briefly outlines a location's row in the list — used after adding one so
+// it's clear where it landed in the (alphabetical) list.
+function flashLocationRow(name) {
+  const row = [...document.querySelectorAll("#locations-list .location-row")]
+    .find(r => r.dataset.originalName === name);
+  if (!row) return;
+  row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  row.classList.add("settings-search-flash");
+}
+
+document.getElementById("add-location-single").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const nameInput = document.getElementById("add-location-name");
+  const latInput = document.getElementById("add-location-lat");
+  const lonInput = document.getElementById("add-location-lon");
+  [nameInput, latInput, lonInput].forEach(i => i.classList.remove("invalid"));
+
+  let name = nameInput.value.trim();
+  const lat = parseFloat(latInput.value);
+  const lon = parseFloat(lonInput.value);
+  const problems = [];
+  if (!name) { problems.push("a name"); nameInput.classList.add("invalid"); }
+  if (!(lat >= -90 && lat <= 90)) { problems.push("a latitude between -90 and 90"); latInput.classList.add("invalid"); }
+  if (!(lon >= -180 && lon <= 180)) { problems.push("a longitude between -180 and 180"); lonInput.classList.add("invalid"); }
+  if (problems.length) {
+    setAddLocationStatus(`Enter ${problems.join(", ")}.`, true);
+    return;
+  }
+
+  // Saving under an existing name replaces that location's coordinates, so
+  // ask first. Matched case-insensitively so "north trail" doesn't quietly
+  // become a second, separate "North Trail". A legacy name that's only
+  // missing coordinates (needsCoords) has none to overwrite — no prompt.
+  const existing = locationsCache.find(l => l.name.toLowerCase() === name.toLowerCase());
+  if (existing) {
+    name = existing.name;
+    if (!existing.needsCoords &&
+        !confirm(`"${name}" already exists at ${existing.lat}, ${existing.lon}.\n\nReplace its coordinates with ${lat}, ${lon}?`)) {
+      return;
+    }
+  }
+
+  const submitBtn = document.getElementById("add-location-submit-btn");
+  submitBtn.disabled = true;
+  try {
+    const res = await fetch("/api/locations/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_names: [], target_name: name, lat, lon }),
+    });
+    const data = await res.json();
+    if (data.error) { setAddLocationStatus(data.error, true); return; }
+  } catch (err) {
+    setAddLocationStatus("Couldn't save — check your connection and try again.", true);
+    return;
+  } finally {
+    submitBtn.disabled = false;
+  }
+
+  e.target.reset();
+  setAddLocationStatus(existing && !existing.needsCoords ? `Updated "${name}".` : `Added "${name}".`);
+  nameInput.focus(); // ready for the next one
+  await loadLocationsSection();
+  flashLocationRow(name);
+  await refreshTrackMapAndBadge();
+  await loadTrackMediaList();
+  loadUploadLocationOptions(); // the Upload tab's dropdown is now stale
 });
 
 async function saveLocationRow(rowEl) {
@@ -4668,7 +4893,26 @@ let pendingImportSkipped = [];
 
 document.getElementById("locations-csv-input").addEventListener("change", async (e) => {
   const file = e.target.files[0];
-  if (!file) return;
+  e.target.value = ""; // reset so re-selecting the same file still fires a change event next time
+  if (file) await previewLocationsCsv(file);
+});
+
+const locationsCsvDropzone = document.getElementById("locations-csv-dropzone");
+locationsCsvDropzone.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  locationsCsvDropzone.classList.add("dragover");
+});
+locationsCsvDropzone.addEventListener("dragleave", (e) => {
+  if (!locationsCsvDropzone.contains(e.relatedTarget)) locationsCsvDropzone.classList.remove("dragover");
+});
+locationsCsvDropzone.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  locationsCsvDropzone.classList.remove("dragover");
+  const file = e.dataTransfer.files[0];
+  if (file) await previewLocationsCsv(file);
+});
+
+async function previewLocationsCsv(file) {
 
   const resultEl = document.getElementById("locations-import-result");
   resultEl.classList.remove("error");
@@ -4682,7 +4926,6 @@ document.getElementById("locations-csv-input").addEventListener("change", async 
   try {
     const res = await fetch("/api/locations/import-csv/preview", { method: "POST", body: formData });
     const data = await res.json();
-    e.target.value = ""; // reset so re-selecting the same file still fires a change event next time
 
     if (data.error) {
       resultEl.textContent = "Error: " + data.error;
@@ -4704,7 +4947,7 @@ document.getElementById("locations-csv-input").addEventListener("change", async 
     resultEl.textContent = "Import failed — check your connection and try again.";
     resultEl.classList.add("error");
   }
-});
+}
 
 function showImportConflicts(conflicts, newCount, skipped, validRows) {
   pendingImportRows = validRows;
@@ -4792,6 +5035,7 @@ async function commitLocationsImport(rows, skippedFromPreview) {
     await loadLocationsSection(); // refresh the list to show newly-imported entries
     await refreshTrackMapAndBadge();
     await loadTrackMediaList();
+    loadUploadLocationOptions(); // the Upload tab's dropdown is now stale
   } catch (err) {
     resultEl.textContent = "Import failed — check your connection and try again.";
     resultEl.classList.add("error");

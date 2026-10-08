@@ -35,6 +35,7 @@ have to change to scale beyond one worker.
 
 import collections
 import csv
+import errno
 import hashlib
 import io
 import json
@@ -118,6 +119,16 @@ UPLOAD_BATCHES_FILE = RUNS_DIR / "upload_batches_index.json"
 # so a mismatch between client and server here would corrupt every upload.
 CHUNK_SIZE = 8 * 1024 * 1024
 MAX_CHUNK_BYTES = CHUNK_SIZE * 2  # generous slack over the expected chunk size
+
+# Free space an upload must leave behind on the uploads drive. Processing
+# writes its own files after the upload (thumbnails, bar crops,
+# predictions.json, logs, the JSON indexes), and a completely full disk can
+# break those writes and the OS alike — see _check_upload_space.
+STORAGE_RESERVE_BYTES = 1024 ** 3
+# An "uploading" batch untouched for this long is treated as abandoned (a
+# closed tab that never resumed): its unwritten bytes stop counting against
+# new uploads, so a dead batch can't block everyone forever.
+UPLOAD_STALE_AFTER = timedelta(hours=24)
 
 # Reserved dropdown values that are never real saved config names.
 SKIP_OCR_VALUE = "__skip_ocr__"
@@ -1016,6 +1027,111 @@ def auth_me():
     return jsonify({"signed_in": True, **_public_user(username, user)})
 
 
+def _format_bytes(n):
+    """Matches formatBytes in static/script.js, for error messages."""
+    if n < 1024:
+        return f"{n} B"
+    for unit in ("KB", "MB", "GB", "TB"):
+        n /= 1024
+        if n < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}"
+
+
+def _unallocated_bytes(path, size):
+    """
+    How much of a pre-sized upload file (see init_upload_batch, which
+    truncates each one to its final size) still has no disk space behind
+    it. On Windows/NTFS that truncate reserves the space up front, so free
+    space already reflects it — but st_blocks doesn't exist there, so it's
+    counted as fully allocated (0). On macOS/Linux the truncate makes a
+    sparse file that takes no space until chunks are written, so the
+    difference has to be counted explicitly.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return size  # not created yet — all of it is still to come
+    blocks = getattr(st, "st_blocks", None)
+    if blocks is None:
+        return 0
+    return max(0, size - blocks * 512)
+
+
+def _batch_last_active(manifest):
+    try:
+        return datetime.fromisoformat(manifest.get("updated_at") or manifest["created_at"])
+    except (KeyError, ValueError):
+        return datetime.min
+
+
+def _check_upload_space(batch_id, cleaned):
+    """
+    Returns None if the uploads drive can take this batch, else a dict
+    describing the shortfall. Must be called holding upload_batches_lock,
+    so two uploads starting at once can't both claim the same free space.
+
+    Needed = this batch's bytes not already on disk. Committed = what other
+    live (non-stale) in-progress uploads will still write. Both are counted
+    by actual allocation, so a resumed batch isn't charged for chunks it
+    already has.
+    """
+    batch_dir = UPLOADS_DIR / batch_id
+    existing_files = upload_batches.get(batch_id, {}).get("files", {})
+    needed = 0
+    for rel, size in cleaned:
+        known = existing_files.get(rel)
+        if known and known["size"] == size:
+            needed += _unallocated_bytes(batch_dir / rel, size)
+        else:
+            needed += size
+
+    cutoff = datetime.now() - UPLOAD_STALE_AFTER
+    committed = 0
+    for other_id, manifest in upload_batches.items():
+        if other_id == batch_id or manifest.get("status") != "uploading":
+            continue
+        if _batch_last_active(manifest) < cutoff:
+            continue
+        for rel, f in manifest.get("files", {}).items():
+            if len(f["received_chunks"]) < f["expected_chunks"]:
+                committed += _unallocated_bytes(UPLOADS_DIR / other_id / rel, f["size"])
+
+    free = shutil.disk_usage(UPLOADS_DIR).free
+    available = max(0, free - committed - STORAGE_RESERVE_BYTES)
+    if needed <= available:
+        return None
+    return {
+        "needed_bytes": needed,
+        "available_bytes": available,
+        "free_bytes": free,
+        "committed_bytes": committed,
+        "reserve_bytes": STORAGE_RESERVE_BYTES,
+    }
+
+
+def _insufficient_storage_response(shortfall):
+    """507 with the numbers the Upload tab shows, plus how much Empty Trash
+    could free, so the message can point somewhere useful."""
+    trash_bytes = _storage_response()["trash_bytes"]
+    # Explain the gap between "available" and the free space Settings shows,
+    # or the numbers look wrong.
+    notes = [f"{_format_bytes(shortfall['reserve_bytes'])} is kept free for processing"]
+    if shortfall["committed_bytes"]:
+        notes.append(f"{_format_bytes(shortfall['committed_bytes'])} is set aside for other uploads in progress")
+    msg = (
+        f"Not enough space on the server for this folder: it needs "
+        f"{_format_bytes(shortfall['needed_bytes'])}, but only "
+        f"{_format_bytes(shortfall['available_bytes'])} is available "
+        f"({'; '.join(notes)})."
+    )
+    return jsonify({
+        "error": msg,
+        "code": "insufficient_storage",
+        **shortfall,
+        "trash_bytes": trash_bytes,
+    }), 507
+
+
 @app.route("/api/uploads", methods=["POST"])
 @login_required
 def init_upload_batch():
@@ -1060,6 +1176,14 @@ def init_upload_batch():
             resume_id and upload_batches.get(resume_id, {}).get("status") == "uploading"
         )
         batch_id = resume_id if resumable else uuid.uuid4().hex[:16]
+
+        # Refuse up front, before any bytes are sent, rather than letting
+        # the upload run until the disk fills and chunk writes start
+        # failing partway through.
+        shortfall = _check_upload_space(batch_id, cleaned)
+        if shortfall:
+            return _insufficient_storage_response(shortfall)
+
         if not resumable:
             upload_batches[batch_id] = {
                 "status": "uploading",
@@ -1067,6 +1191,7 @@ def init_upload_batch():
                 "files": {},
             }
         manifest = upload_batches[batch_id]
+        manifest["updated_at"] = datetime.now().isoformat(timespec="seconds")
 
         batch_dir = UPLOADS_DIR / batch_id
         batch_dir.mkdir(parents=True, exist_ok=True)
@@ -1120,11 +1245,23 @@ def upload_chunk(batch_id):
     if len(payload) > MAX_CHUNK_BYTES:
         return jsonify({"error": "Chunk exceeds the maximum allowed size"}), 400
 
-    with open(UPLOADS_DIR / batch_id / rel, "r+b") as fh:
-        fh.seek(chunk_index * CHUNK_SIZE)
-        fh.write(payload)
+    try:
+        with open(UPLOADS_DIR / batch_id / rel, "r+b") as fh:
+            fh.seek(chunk_index * CHUNK_SIZE)
+            fh.write(payload)
+    except OSError as e:
+        if e.errno != errno.ENOSPC:
+            raise
+        # The up-front check (see init_upload_batch) should prevent this,
+        # but something else on the server can still fill the disk mid-
+        # upload. 507 tells the client to stop rather than retry.
+        return jsonify({
+            "error": "The server ran out of disk space during this upload.",
+            "code": "insufficient_storage",
+        }), 507
 
     with upload_batches_lock:
+        manifest["updated_at"] = datetime.now().isoformat(timespec="seconds")
         if chunk_index not in file_entry["received_chunks"]:
             file_entry["received_chunks"].append(chunk_index)
         file_complete = len(file_entry["received_chunks"]) >= file_entry["expected_chunks"]
