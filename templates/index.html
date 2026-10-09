@@ -538,7 +538,15 @@
       </div>
       <div class="correction-row">
         <select class="correction-select"></select>
-        <button class="save-correction-btn">Save</button>
+        <!-- All four labels share one grid cell, so the button is always as
+             wide as the widest; data-mode (see updateCorrectionButton) picks
+             which one shows. -->
+        <button class="save-correction-btn" data-mode="save">
+          <span data-label="save">Save</span>
+          <span data-label="saved">Saved</span>
+          <span data-label="verify">Verify</span>
+          <span data-label="unverify">Unverify</span>
+        </button>
       </div>
     </div>
   </div>

@@ -2639,7 +2639,10 @@ function removeLibraryCard(gridId, videoId) {
 // Fills in both forms of a card's "verified" marker — the hover info
 // bubble and the plain tag. CSS decides which one is visible (the tag is
 // only shown on phones when signed out, where hover doesn't exist).
+// dataset.verified is what the correction button reads (see
+// updateCorrectionButton).
 function setCardVerified(cardEl, correctedBy) {
+  cardEl.dataset.verified = "1";
   cardEl.querySelector(".verified-info").classList.remove("hidden");
   cardEl.querySelector(".verified-info-tooltip").textContent =
     correctedBy ? `Verified by: ${correctedBy}` : "Verified";
@@ -2648,17 +2651,82 @@ function setCardVerified(cardEl, correctedBy) {
   tag.classList.add("is-verified");
 }
 
-function patchLibraryCardSpecies(gridId, videoId, newDisplaySpecies, correctedBy) {
-  const cardEl = findLibraryCardEl(gridId, videoId);
-  if (!cardEl) return;
+function setCardUnverified(cardEl) {
+  delete cardEl.dataset.verified;
+  cardEl.querySelector(".verified-info").classList.add("hidden");
+  cardEl.querySelector(".verified-info-tooltip").textContent = "";
+  const tag = cardEl.querySelector(".verified-tag");
+  tag.textContent = "";
+  tag.classList.remove("is-verified");
+}
 
-  const badge = cardEl.querySelector(".species-badge");
-  badge.textContent = newDisplaySpecies;
-  badge.classList.toggle("blank", newDisplaySpecies === "blank");
-  setCardVerified(cardEl, correctedBy);
+// The class a "Predicted: …" option stands for — what Verify confirms.
+function predictedClass(video) {
+  return video.ai_species || "blank";
+}
 
+// Makes sure `species` is selectable in a card's dropdown — a class picked
+// via "+ Add new species", or the predicted class being verified, may not
+// have had any clips yet when the list was built.
+function ensureCorrectionOption(select, species) {
+  if ([...select.options].some(o => o.value === species)) return;
+  const opt = document.createElement("option");
+  opt.value = species;
+  opt.textContent = species;
+  select.insertBefore(opt, select.querySelector('option[value="__add_new__"]'));
+}
+
+// One button whose job depends on the dropdown and the card's status:
+//   the class already saved on this card → "Saved"    (grey)  nothing to do
+//   any other class                      → "Save"     (green) save it, unmark
+//   "Predicted" + unverified             → "Verify"   (blue)  confirm the AI's class
+//   "Predicted" + already verified       → "Unverify" (blue)  clear it, re-mark
+//   "Predicted" + just unverified        → "Saved"    (grey)  confirms the Unverify
+//     went through; dataset.justUnverified is cleared by the next dropdown
+//     change, and a rebuilt card never has it, so it's "Verify" again on
+//     re-entering the page.
+// "Saved" compares against the saved correction (dataset.correctedSpecies),
+// not the badge: on an unverified card, picking the class the AI predicted
+// still says "Save", since nothing is stored yet and saving it verifies it.
+function updateCorrectionButton(cardEl) {
   const select = cardEl.querySelector(".correction-select");
-  if (select) select.value = newDisplaySpecies;
+  const btn = cardEl.querySelector(".save-correction-btn");
+  if (!select || !btn) return;
+  let mode;
+  if (select.value === "") {
+    mode = cardEl.dataset.verified ? "unverify" : cardEl.dataset.justUnverified ? "saved" : "verify";
+  }
+  else mode = select.value === cardEl.dataset.correctedSpecies ? "saved" : "save";
+  btn.dataset.mode = mode; // CSS shows the matching label and colour — see the template
+  btn.disabled = mode === "saved";
+}
+
+// Brings a card in line with a saved record from /correct: badge, verified
+// marker, dropdown, review bubble, and button label all together.
+function applyCardSpeciesState(cardEl, data) {
+  const badge = cardEl.querySelector(".species-badge");
+  badge.textContent = data.display_species;
+  badge.classList.toggle("blank", data.display_species === "blank");
+
+  if (data.corrected_species) setCardVerified(cardEl, data.corrected_by);
+  else setCardUnverified(cardEl);
+
+  cardEl.dataset.correctedSpecies = data.corrected_species || "";
+  const select = cardEl.querySelector(".correction-select");
+  if (select) {
+    if (data.corrected_species) ensureCorrectionOption(select, data.corrected_species);
+    select.value = data.corrected_species || ""; // unverified shows the Predicted option
+  }
+
+  if (isSignedIn()) {
+    cardEl.querySelector(".unreviewed-corner-bubble").classList.toggle("hidden", !data.marked_for_review);
+  }
+  updateCorrectionButton(cardEl);
+}
+
+function patchLibraryCardSpecies(gridId, videoId, data) {
+  const cardEl = findLibraryCardEl(gridId, videoId);
+  if (cardEl) applyCardSpeciesState(cardEl, data);
 }
 
 async function loadLibrary(preserveOrder = false) {
@@ -2831,7 +2899,7 @@ function renderGrid(videos, gridId, emptyId) {
     // existed (see correct_species in app.py) — older ones just say
     // "Verified" with no name attached.
     if (v.corrected_species) {
-      setCardVerified(card, v.corrected_by);
+      setCardVerified(card.querySelector(".video-card"), v.corrected_by);
     }
     if (v.marked_for_review) {
       // Review state is an internal workflow signal — meaningless to a
@@ -2878,19 +2946,53 @@ function renderGrid(videos, gridId, emptyId) {
 
     const correctionSelect = card.querySelector(".correction-select");
     buildCorrectionOptions(correctionSelect, v);
+    // What the dropdown goes back to on a cancelled pick or a failed save —
+    // kept on the element, since the "+ Add new species" modal updates the
+    // card without touching `v` (see applyCardSpeciesState).
+    cardEl.dataset.correctedSpecies = v.corrected_species || "";
+    updateCorrectionButton(cardEl);
 
     correctionSelect.addEventListener("change", () => {
+      delete cardEl.dataset.justUnverified;
       if (correctionSelect.value === "__add_new__") {
         openSpeciesModal(v.id, whichTab);
-        correctionSelect.value = ""; // don't leave the sentinel selected
+        correctionSelect.value = cardEl.dataset.correctedSpecies; // don't leave the sentinel selected
       }
+      updateCorrectionButton(cardEl);
     });
 
-    card.querySelector(".save-correction-btn").addEventListener("click", async () => {
+    const correctionBtn = card.querySelector(".save-correction-btn");
+    correctionBtn.addEventListener("click", async () => {
       if (correctionSelect.value === "__add_new__") return; // handled by modal instead
-      const data = await saveCorrection(v.id, correctionSelect.value);
-      if (data.error) { alert(data.error); return; }
+      const mode = correctionBtn.dataset.mode;
+      let data;
+      correctionBtn.disabled = true;
+      try {
+        if (mode === "verify") {
+          // Confirm the AI's own class: select it as a real class, which
+          // saves it as the correction and clears the review mark.
+          const species = predictedClass(v);
+          ensureCorrectionOption(correctionSelect, species);
+          correctionSelect.value = species;
+          data = await saveCorrection(v.id, species);
+        } else if (mode === "unverify") {
+          // Back to the AI's prediction, and back into the review queue.
+          data = await saveCorrection(v.id, "", { markForReview: true });
+        } else {
+          data = await saveCorrection(v.id, correctionSelect.value);
+        }
+      } finally {
+        correctionBtn.disabled = false;
+      }
+      if (data.error) {
+        alert(data.error);
+        correctionSelect.value = cardEl.dataset.correctedSpecies;
+        updateCorrectionButton(cardEl);
+        return;
+      }
+      if (mode === "unverify") cardEl.dataset.justUnverified = "1"; // shown as "Saved" — see updateCorrectionButton
       v.corrected_species = data.corrected_species;
+      v.corrected_by = data.corrected_by;
       v.display_species = data.display_species;
       v.marked_for_review = data.marked_for_review;
       await refreshSpeciesData(); // badge counts shift; doesn't touch the current grid
@@ -2908,12 +3010,7 @@ function renderGrid(videos, gridId, emptyId) {
       if (activeFilter && data.display_species !== activeFilter) {
         removeLibraryCard(gridIdForTab, v.id);
       } else {
-        patchLibraryCardSpecies(gridIdForTab, v.id, data.display_species, data.corrected_by);
-        if (!data.marked_for_review) {
-          const cardEl = findLibraryCardEl(gridIdForTab, v.id);
-          const bubble = cardEl && cardEl.querySelector(".unreviewed-corner-bubble");
-          if (bubble) bubble.classList.add("hidden");
-        }
+        patchLibraryCardSpecies(gridIdForTab, v.id, data);
         syncExpandedPanelReviewState(gridIdForTab, v.id, data.marked_for_review);
       }
     });
@@ -3168,11 +3265,15 @@ async function deleteVideo(videoId) {
   return true;
 }
 
-async function saveCorrection(videoId, species) {
+// markForReview (optional) sets the review mark in the same request —
+// Unverify uses it to send the entry back to the Review queue.
+async function saveCorrection(videoId, species, { markForReview } = {}) {
+  const body = { species };
+  if (markForReview !== undefined) body.marked_for_review = markForReview;
   const res = await fetch(`/api/videos/${videoId}/correct`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ species }),
+    body: JSON.stringify(body),
   });
   return res.json();
 }
@@ -3261,12 +3362,7 @@ function renderModalList(query) {
       if (activeFilter && data.display_species !== activeFilter) {
         removeLibraryCard(gridIdForTab, targetVideoId);
       } else {
-        patchLibraryCardSpecies(gridIdForTab, targetVideoId, data.display_species, data.corrected_by);
-        if (!data.marked_for_review) {
-          const cardEl = findLibraryCardEl(gridIdForTab, targetVideoId);
-          const bubble = cardEl && cardEl.querySelector(".unreviewed-corner-bubble");
-          if (bubble) bubble.classList.add("hidden");
-        }
+        patchLibraryCardSpecies(gridIdForTab, targetVideoId, data);
         syncExpandedPanelReviewState(gridIdForTab, targetVideoId, data.marked_for_review);
       }
     });

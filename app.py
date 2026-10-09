@@ -2208,19 +2208,30 @@ def correct_species(video_id):
     with videos_lock:
         if video_id not in videos:
             return jsonify({"error": "Unknown video"}), 404
-        # empty string clears the correction, reverting to the AI's own tag
-        videos[video_id]["corrected_species"] = species or None
-        videos[video_id]["corrected_at"] = datetime.now().isoformat(timespec="seconds")
-        # Stamped from the SESSION, never from anything the client sends —
-        # a client-supplied name would make "Verified by" meaningless, since
-        # anyone could claim to be anyone.
-        videos[video_id]["corrected_by"] = f"{user['first_name']} {user['last_name']}"
+        record = videos[video_id]
         if species:
+            record["corrected_species"] = species
+            record["corrected_at"] = datetime.now().isoformat(timespec="seconds")
+            # Stamped from the SESSION, never from anything the client sends —
+            # a client-supplied name would make "Verified by" meaningless,
+            # since anyone could claim to be anyone.
+            record["corrected_by"] = f"{user['first_name']} {user['last_name']}"
             # Confirming a species is itself an act of reviewing — clears the
-            # mark. Clearing a correction (empty species) is more of an
-            # "undo" than a review, so it deliberately leaves the mark as-is.
-            videos[video_id]["marked_for_review"] = False
-        record = dict(videos[video_id])
+            # mark.
+            record["marked_for_review"] = False
+        else:
+            # Empty string clears the correction ("Unverify"), reverting to
+            # the AI's own tag — and with it who verified it and when, which
+            # no longer describe anything.
+            record["corrected_species"] = None
+            record["corrected_at"] = None
+            record["corrected_by"] = None
+        # Optional explicit mark, applied last so it wins: the Library's
+        # Unverify sends True to send the entry back to review in the same
+        # request. Without it, clearing is an "undo" that leaves the mark as-is.
+        if "marked_for_review" in data:
+            record["marked_for_review"] = bool(data["marked_for_review"])
+        record = dict(record)
     save_videos_index()
     return jsonify({**record, "display_species": display_species(record)})
 

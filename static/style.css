@@ -912,6 +912,35 @@ button:disabled { background: #a9b4c2; cursor: not-allowed; }
   background: #57606a;
 }
 .correction-row button:hover { background: #444b53; }
+/* Fixed width whatever the label: all four labels are stacked in one grid
+   cell (hidden ones keep their space via visibility), so the button is
+   always as wide as the widest ("Unverify") in whatever font the system
+   uses. */
+.save-correction-btn {
+  display: inline-grid;
+  justify-items: center;
+  align-items: center;
+}
+.save-correction-btn > span { grid-area: 1 / 1; visibility: hidden; }
+.save-correction-btn[data-mode="save"] > [data-label="save"],
+.save-correction-btn[data-mode="verify"] > [data-label="verify"],
+.save-correction-btn[data-mode="saved"] > [data-label="saved"],
+.save-correction-btn[data-mode="unverify"] > [data-label="unverify"] { visibility: visible; }
+
+/* Colour per state (see updateCorrectionButton). Save uses the Review
+   tab's Confirm green; Verify/Unverify are the app's blue; Saved keeps the
+   grey and is disabled, since there's nothing to save. */
+.correction-row .save-correction-btn[data-mode="save"] { background: #15803d; }
+.correction-row .save-correction-btn[data-mode="save"]:hover { background: #116430; }
+.correction-row .save-correction-btn[data-mode="verify"],
+.correction-row .save-correction-btn[data-mode="unverify"] { background: #2563eb; }
+.correction-row .save-correction-btn[data-mode="verify"]:hover,
+.correction-row .save-correction-btn[data-mode="unverify"]:hover { background: #1d4ed8; }
+.correction-row .save-correction-btn[data-mode="saved"],
+.correction-row .save-correction-btn[data-mode="saved"]:hover { background: #57606a; cursor: default; }
+/* Mid-request (any state but Saved): the usual disabled grey. */
+.correction-row .save-correction-btn:disabled:not([data-mode="saved"]),
+.correction-row .save-correction-btn:disabled:not([data-mode="saved"]):hover { background: #a9b4c2; }
 
 /* ---- Library species group cards ---- */
 .species-group-cards {
