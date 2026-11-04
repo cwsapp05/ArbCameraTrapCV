@@ -185,6 +185,12 @@ category_settings_lock = threading.Lock()
 storage_settings = {"auto_empty_enabled": False, "auto_empty_threshold": 90, "last_auto_empty": None}
 storage_settings_lock = threading.Lock()
 
+# Caches the on-disk size of everything under BASE_DIR *except* RUNS_DIR
+# (source code, .venv, .git) — see _static_app_bytes. That portion doesn't
+# change while the server is running, so it's only worth walking once.
+_static_app_bytes_cache = None
+_static_app_bytes_lock = threading.Lock()
+
 # Held for the whole of an Empty Trash run (manual or automatic) so two can
 # never overlap and race each other deleting the same files.
 empty_trash_lock = threading.Lock()
@@ -2374,13 +2380,62 @@ def _file_size(path):
         return 0
 
 
+def _dir_size(path):
+    """Total size of every file under path, recursively. Walked by hand
+    (rather than e.g. `du`) so it works the same on Windows and POSIX;
+    unreadable entries are skipped rather than failing the whole count."""
+    total = 0
+    try:
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        total += _dir_size(entry.path)
+                    else:
+                        total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return total
+
+
+def _static_app_bytes():
+    """Size of BASE_DIR minus RUNS_DIR: the app's own code, venv, and git
+    history. This doesn't change while the server is running (unlike
+    RUNS_DIR, which grows with every upload), so it's computed once and
+    cached rather than re-walked on every storage check."""
+    global _static_app_bytes_cache
+    if _static_app_bytes_cache is None:
+        with _static_app_bytes_lock:
+            if _static_app_bytes_cache is None:
+                runs_dir = RUNS_DIR.resolve()
+                total = 0
+                for entry in BASE_DIR.iterdir():
+                    if entry.resolve() == runs_dir:
+                        continue
+                    total += _dir_size(entry) if entry.is_dir() else _file_size(entry)
+                _static_app_bytes_cache = total
+    return _static_app_bytes_cache
+
+
 def disk_usage_info():
+    """Reports storage against a budget scoped to this app, not the whole
+    drive: other folders on the same drive (unrelated to BASE_DIR) are
+    excluded from the max, since this app has no claim on that space.
+    total_bytes is derived algebraically — free_bytes + this app's own
+    on-disk footprint — rather than by hardcoding and walking "everything
+    else on the drive", which would be slower and depend on an assumed
+    drive layout.
+    """
     usage = shutil.disk_usage(UPLOADS_DIR)
+    app_bytes = _static_app_bytes() + _dir_size(RUNS_DIR)
+    total_bytes = usage.free + app_bytes
     return {
-        "total_bytes": usage.total,
-        "used_bytes": usage.used,
+        "total_bytes": total_bytes,
+        "used_bytes": app_bytes,
         "free_bytes": usage.free,
-        "percent_used": round(usage.used / usage.total * 100, 1) if usage.total else 0,
+        "percent_used": round(app_bytes / total_bytes * 100, 1) if total_bytes else 0,
     }
 
 
