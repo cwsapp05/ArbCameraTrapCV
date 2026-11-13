@@ -1,3 +1,5 @@
+**The repository is forked and further updated/maintained here:** https://github.com/UCF/UCFArboretum-Wildlife-Dashboard
+
 # ArbCameraTrapCV
 
 A trail camera triage tool built for the UCF Arboretum, combining automated
